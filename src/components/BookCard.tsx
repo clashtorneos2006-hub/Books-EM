@@ -4,10 +4,11 @@ import { Book, CurrencyCode, StoreSettings } from '../types';
 import { formatPrice, getStatusDetails, generateWhatsAppUrl, FALLBACK_BOOK_COVER } from '../utils/helpers';
 import { BotanicalSprig } from './BotanicalElements';
 import { BcvRates, calculateBcvBreakdown } from '../services/bcvRates';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 interface BookCardProps {
   book: Book;
-  settings: StoreSettings;
+  settings?: StoreSettings;
   isWishlisted: boolean;
   bcvRates?: BcvRates;
   onToggleWishlist: (id: string) => void;
@@ -26,11 +27,12 @@ export const BookCard: React.FC<BookCardProps> = ({
   isAdminLoggedIn = false,
   onEditBook,
 }) => {
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   const statusInfo = getStatusDetails(book.status);
-  const whatsappUrl = generateWhatsAppUrl(book, settings, bcvRates);
+  const whatsappUrl = generateWhatsAppUrl(book, safeSettings, bcvRates);
 
   const currency: CurrencyCode = book.currency || 'USD';
-  const priceDisplay = formatPrice(book.price, settings.currencySymbol, currency);
+  const priceDisplay = formatPrice(book.price, safeSettings.currencySymbol, currency);
   const bcvBreakdown = bcvRates ? calculateBcvBreakdown(book.price, currency, bcvRates) : null;
 
   // Multi-image list setup

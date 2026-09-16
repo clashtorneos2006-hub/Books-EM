@@ -11,10 +11,61 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const BOOKS_FILE = path.join(DATA_DIR, 'books.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const CATALOGS_FILE = path.join(DATA_DIR, 'catalogs.json');
+const PUBLIC_UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
+const ROOT_UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 
-// Ensure data directory exists
+// Ensure data and uploads directories exist
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(PUBLIC_UPLOADS_DIR)) {
+  fs.mkdirSync(PUBLIC_UPLOADS_DIR, { recursive: true });
+}
+if (!fs.existsSync(ROOT_UPLOADS_DIR)) {
+  fs.mkdirSync(ROOT_UPLOADS_DIR, { recursive: true });
+}
+
+// Helper to save base64 Data URL to public uploads file
+function saveBase64Image(dataUrl: string, prefix = 'book'): string {
+  if (!dataUrl || typeof dataUrl !== 'string') return '';
+  // If it is already an HTTP URL or local static URL, keep it
+  if (!dataUrl.startsWith('data:image/')) {
+    return dataUrl;
+  }
+
+  try {
+    const matches = dataUrl.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
+    if (!matches) return dataUrl;
+
+    let ext = matches[1].toLowerCase();
+    if (ext === 'jpeg') ext = 'jpg';
+    if (ext.includes('svg')) ext = 'svg';
+    if (ext.includes('png')) ext = 'png';
+    if (ext.includes('webp')) ext = 'webp';
+
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 8);
+    const filename = `${prefix}_${timestamp}_${randomSuffix}.${ext}`;
+
+    // Write to both public/uploads (for Vite and static preview) and uploads/
+    const publicPath = path.join(PUBLIC_UPLOADS_DIR, filename);
+    const rootPath = path.join(ROOT_UPLOADS_DIR, filename);
+
+    fs.writeFileSync(publicPath, buffer);
+    try {
+      fs.writeFileSync(rootPath, buffer);
+    } catch {
+      // Best-effort
+    }
+
+    return `/uploads/${filename}`;
+  } catch (err) {
+    console.error('Error saving base64 image to server:', err);
+    return dataUrl;
+  }
 }
 
 // Helper to safely read JSON file with fallback
@@ -59,6 +110,38 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+  // Serve persistent uploaded image files statically for both dev and production
+  app.use('/uploads', express.static(PUBLIC_UPLOADS_DIR, { maxAge: '30d' }));
+  app.use('/uploads', express.static(ROOT_UPLOADS_DIR, { maxAge: '30d' }));
+
+  // API Routes: Direct Image Upload
+  app.post('/api/upload', (req: Request, res: Response) => {
+    const { dataUrl, filename } = req.body;
+    if (!dataUrl || typeof dataUrl !== 'string') {
+      res.status(400).json({ error: 'La imagen en formato base64/dataUrl es requerida' });
+      return;
+    }
+
+    const cleanPrefix = filename ? filename.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 20) : 'foto';
+    const publicUrl = saveBase64Image(dataUrl, cleanPrefix);
+    res.json({ success: true, url: publicUrl });
+  });
+
+  app.post('/api/upload-batch', (req: Request, res: Response) => {
+    const { images } = req.body;
+    if (!Array.isArray(images)) {
+      res.status(400).json({ error: 'Se esperaba un arreglo de imágenes' });
+      return;
+    }
+
+    const urls = images.map((img: string, idx: number) => {
+      if (!img || typeof img !== 'string') return '';
+      return saveBase64Image(img, `foto_${idx + 1}`);
+    }).filter(Boolean);
+
+    res.json({ success: true, urls });
+  });
+
   // API Routes: Health
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: Date.now() });
@@ -78,18 +161,24 @@ async function startServer() {
     }
 
     const books = readJsonFile<Book[]>(BOOKS_FILE, INITIAL_BOOKS);
-    const images = Array.isArray(newBookData.images) && newBookData.images.length > 0
+    const rawImages = Array.isArray(newBookData.images) && newBookData.images.length > 0
       ? newBookData.images.filter(Boolean)
       : (newBookData.coverUrl ? [newBookData.coverUrl] : []);
-    const coverUrl = images[0] || newBookData.coverUrl || '';
+    
+    // Save any base64 images to server static uploads directory
+    const images = rawImages.map((img: string) => saveBase64Image(img, 'portada'));
+    const coverUrl = images[0] || saveBase64Image(newBookData.coverUrl || '', 'portada');
 
     const newBook: Book = {
       ...newBookData,
       id: newBookData.id || `book-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       createdAt: newBookData.createdAt || Date.now(),
       coverUrl,
-      images: images.length > 0 ? images : [coverUrl],
+      images: images.length > 0 ? images : (coverUrl ? [coverUrl] : []),
       price: Number(newBookData.price) || 0,
+      currency: newBookData.currency || 'USD',
+      status: newBookData.status || 'disponible',
+      featured: Boolean(newBookData.featured),
     };
 
     const updatedBooks = [newBook, ...books.filter((b) => b.id !== newBook.id)];
@@ -97,7 +186,8 @@ async function startServer() {
     res.status(201).json(newBook);
   });
 
-  app.put('/api/books/:id', (req: Request, res: Response) => {
+  // Helper for safe book updating with field preservation and image conversion
+  const handleUpdateBook = (req: Request, res: Response) => {
     const bookId = req.params.id;
     const updatedData = req.body;
     if (!updatedData) {
@@ -107,19 +197,44 @@ async function startServer() {
 
     const books = readJsonFile<Book[]>(BOOKS_FILE, INITIAL_BOOKS);
     const existingIndex = books.findIndex((b) => b.id === bookId);
+    const existingBook = existingIndex >= 0 ? books[existingIndex] : null;
 
-    const images = Array.isArray(updatedData.images) && updatedData.images.length > 0
-      ? updatedData.images.filter(Boolean)
-      : (updatedData.coverUrl ? [updatedData.coverUrl] : []);
-    const coverUrl = images[0] || updatedData.coverUrl || '';
+    // Preserve existing images if not provided in update
+    let images: string[];
+    if (Array.isArray(updatedData.images) && updatedData.images.length > 0) {
+      images = updatedData.images.filter(Boolean).map((img: string) => saveBase64Image(img, 'portada'));
+    } else if (updatedData.coverUrl) {
+      images = [saveBase64Image(updatedData.coverUrl, 'portada')];
+    } else if (existingBook && Array.isArray(existingBook.images) && existingBook.images.length > 0) {
+      images = existingBook.images;
+    } else if (existingBook?.coverUrl) {
+      images = [existingBook.coverUrl];
+    } else {
+      images = [];
+    }
 
+    const coverUrl = images[0] || (updatedData.coverUrl ? saveBase64Image(updatedData.coverUrl, 'portada') : existingBook?.coverUrl) || '';
+
+    // Safe merge: Never wipe out existing fields when a partial update (like price or status) is executed
     const sanitizedBook: Book = {
+      ...(existingBook || {}),
       ...updatedData,
       id: bookId,
+      title: updatedData.title !== undefined ? String(updatedData.title).trim() : (existingBook?.title || 'Sin Título'),
+      author: updatedData.author !== undefined ? String(updatedData.author).trim() : (existingBook?.author || 'Autor Desconocido'),
+      genre: updatedData.genre !== undefined ? String(updatedData.genre).trim() : (existingBook?.genre || 'General'),
+      price: updatedData.price !== undefined ? Number(updatedData.price) || 0 : (existingBook?.price ?? 0),
+      currency: updatedData.currency ?? existingBook?.currency ?? 'USD',
+      status: updatedData.status ?? existingBook?.status ?? 'disponible',
+      featured: updatedData.featured !== undefined ? Boolean(updatedData.featured) : (existingBook?.featured ?? false),
       coverUrl,
-      images: images.length > 0 ? images : [coverUrl],
-      price: Number(updatedData.price) || 0,
-      createdAt: updatedData.createdAt || (existingIndex >= 0 ? books[existingIndex].createdAt : Date.now()),
+      images: images.length > 0 ? images : (coverUrl ? [coverUrl] : []),
+      synopsis: updatedData.synopsis !== undefined ? String(updatedData.synopsis).trim() : (existingBook?.synopsis || ''),
+      editorial: updatedData.editorial !== undefined ? String(updatedData.editorial).trim() : existingBook?.editorial,
+      pages: updatedData.pages !== undefined ? Number(updatedData.pages) || undefined : existingBook?.pages,
+      publishedYear: updatedData.publishedYear !== undefined ? Number(updatedData.publishedYear) || undefined : existingBook?.publishedYear,
+      isbn: updatedData.isbn !== undefined ? String(updatedData.isbn).trim() : existingBook?.isbn,
+      createdAt: updatedData.createdAt || existingBook?.createdAt || Date.now(),
     };
 
     let updatedBooks: Book[];
@@ -131,7 +246,10 @@ async function startServer() {
 
     writeJsonFile(BOOKS_FILE, updatedBooks);
     res.json(sanitizedBook);
-  });
+  };
+
+  app.put('/api/books/:id', handleUpdateBook);
+  app.patch('/api/books/:id', handleUpdateBook);
 
   app.delete('/api/books/:id', (req: Request, res: Response) => {
     const bookId = req.params.id;

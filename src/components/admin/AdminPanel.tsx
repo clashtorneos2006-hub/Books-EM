@@ -29,6 +29,7 @@ import {
 import { Book, BookStatus, StoreSettings } from '../../types';
 import { formatPrice, getStatusDetails, buildWhatsAppMessage, cleanPhoneNumber } from '../../utils/helpers';
 import { BcvRates, calculateBcvBreakdown } from '../../services/bcvRates';
+import { DEFAULT_STORE_SETTINGS } from '../../data/initialData';
 import { PublicationCard } from './PublicationCard';
 import { PublicationEditorInline } from './PublicationEditorInline';
 import { AdminBottomDock, AdminTab, ViewMode } from './AdminBottomDock';
@@ -37,7 +38,7 @@ import { CatalogsManager } from './CatalogsManager';
 
 interface AdminPanelProps {
   books: Book[];
-  settings: StoreSettings;
+  settings?: StoreSettings;
   bcvRates?: BcvRates;
   onRefreshRates?: () => Promise<void | BcvRates>;
   onUpdateRates?: (rates: BcvRates) => void;
@@ -128,13 +129,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
 
   // Settings form state (WhatsApp & Store)
-  const [tempSettings, setTempSettings] = useState<StoreSettings>(settings);
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
+  const [tempSettings, setTempSettings] = useState<StoreSettings>(safeSettings);
   const [whatsappSavedMessage, setWhatsappSavedMessage] = useState(false);
   const [storeSavedMessage, setStoreSavedMessage] = useState(false);
-  const [newUsername, setNewUsername] = useState(settings.adminUsername || '');
+  const [newUsername, setNewUsername] = useState(safeSettings.adminUsername || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
+
+  useEffect(() => {
+    if (settings) {
+      setTempSettings(settings);
+      setNewUsername(settings.adminUsername || '');
+    }
+  }, [settings]);
 
   // Floating feedback toast
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
@@ -262,7 +271,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSaveWhatsApp = (e: React.FormEvent) => {
     e.preventDefault();
     const updatedSettings: StoreSettings = {
-      ...settings,
+      ...safeSettings,
       whatsappNumber: tempSettings.whatsappNumber,
       whatsappTemplate: tempSettings.whatsappTemplate,
     };

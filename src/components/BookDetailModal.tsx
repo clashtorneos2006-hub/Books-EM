@@ -4,10 +4,11 @@ import { Book, CurrencyCode, StoreSettings } from '../types';
 import { formatPrice, getStatusDetails, generateWhatsAppUrl, buildWhatsAppMessage, FALLBACK_BOOK_COVER } from '../utils/helpers';
 import { BotanicalSprig } from './BotanicalElements';
 import { BcvRates, calculateBcvBreakdown } from '../services/bcvRates';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 interface BookDetailModalProps {
   book: Book | null;
-  settings: StoreSettings;
+  settings?: StoreSettings;
   isWishlisted: boolean;
   bcvRates?: BcvRates;
   onToggleWishlist: (id: string) => void;
@@ -81,12 +82,13 @@ export const BookDetailModal: React.FC<BookDetailModalProps> = ({
 
   if (!book) return null;
 
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   const statusInfo = getStatusDetails(book.status);
-  const whatsappUrl = generateWhatsAppUrl(book, settings, bcvRates);
-  const rawMessage = buildWhatsAppMessage(book, settings, bcvRates);
+  const whatsappUrl = generateWhatsAppUrl(book, safeSettings, bcvRates);
+  const rawMessage = buildWhatsAppMessage(book, safeSettings, bcvRates);
 
   const currency: CurrencyCode = book.currency || 'USD';
-  const priceFormatted = formatPrice(book.price, settings.currencySymbol, currency);
+  const priceFormatted = formatPrice(book.price, safeSettings.currencySymbol, currency);
   const bcvBreakdown = bcvRates ? calculateBcvBreakdown(book.price, currency, bcvRates) : null;
 
   const handleShare = async () => {

@@ -2,33 +2,41 @@ import React, { useState, useRef } from 'react';
 import { Heart, MessageCircle, Menu, X, Search, Download } from 'lucide-react';
 import { StoreSettings } from '../types';
 import { cleanPhoneNumber } from '../utils/helpers';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 import { BooksEmLogo } from './BotanicalElements';
 import { BcvRates } from '../services/bcvRates';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface HeaderProps {
-  settings: StoreSettings;
+  settings?: StoreSettings;
+  storeName?: string;
   wishlistCount: number;
   bcvRates?: BcvRates;
+  isAdminLoggedIn?: boolean;
   onOpenWishlist: () => void;
   onOpenAdmin: () => void;
   onScrollToCatalog: () => void;
   onScrollToHowToBuy: () => void;
-  searchQuery: string;
-  onSearchChange: (q: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (q: string) => void;
   onOpenInstallPrompt?: () => void;
+  onRefreshBcvRates?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   settings,
+  storeName,
   wishlistCount,
+  bcvRates,
+  isAdminLoggedIn = false,
   onOpenWishlist,
   onOpenAdmin,
   onScrollToCatalog,
   onScrollToHowToBuy,
-  searchQuery,
-  onSearchChange,
+  searchQuery = '',
+  onSearchChange = (_val: string) => {},
   onOpenInstallPrompt,
+  onRefreshBcvRates,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
@@ -64,9 +72,11 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  const cleanPhone = cleanPhoneNumber(settings.whatsappNumber);
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
+  const displayName = storeName || safeSettings.storeName || 'Books EM';
+  const cleanPhone = cleanPhoneNumber(safeSettings.whatsappNumber);
   const generalWhatsAppUrl = cleanPhone
-    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(`¡Hola ${settings.storeName}! Quisiera hacer una consulta sobre su catálogo de libros.`)}`
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(`¡Hola ${displayName}! Quisiera hacer una consulta sobre su catálogo de libros.`)}`
     : '#';
 
   return (

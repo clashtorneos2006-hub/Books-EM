@@ -23,7 +23,7 @@ import {
   ArrowUpDown,
 } from 'lucide-react';
 import { Book, BookStatus, CurrencyCode } from '../../types';
-import { formatPrice, getStatusDetails, compressImageFile, FALLBACK_BOOK_COVER } from '../../utils/helpers';
+import { formatPrice, getStatusDetails, compressImageFile, uploadImageToServer, FALLBACK_BOOK_COVER } from '../../utils/helpers';
 import { BcvRates, calculateBcvBreakdown, getCurrencySymbol } from '../../services/bcvRates';
 
 interface PublicationEditorInlineProps {
@@ -154,12 +154,12 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
     setErrorMessage('');
 
     try {
-      // Compress all images in parallel down to ~40KB-70KB each to prevent storage quota limits
-      const compressedResults = await Promise.all(
-        validFiles.map((file) => compressImageFile(file, 1080, 1440, 0.82))
+      // Upload all images to server so they become permanent public URLs (/uploads/...) for all users
+      const uploadResults = await Promise.all(
+        validFiles.map((file, idx) => uploadImageToServer(file, `libro_${idx + 1}`))
       );
 
-      const validUrls = compressedResults.filter((url): url is string => Boolean(url && url.length > 0));
+      const validUrls = uploadResults.filter((url): url is string => Boolean(url && url.length > 0));
 
       if (validUrls.length > 0) {
         setImages((prev) => {
@@ -168,8 +168,8 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
         });
       }
     } catch (err) {
-      console.error('Error al optimizar fotos:', err);
-      setErrorMessage('Hubo un inconveniente al procesar las imágenes.');
+      console.error('Error al subir y optimizar fotos:', err);
+      setErrorMessage('Hubo un inconveniente al procesar y subir las imágenes.');
     } finally {
       setIsCompressing(false);
       if (fileInputRef.current) fileInputRef.current.value = '';

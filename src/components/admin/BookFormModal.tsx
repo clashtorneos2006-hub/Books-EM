@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Image as ImageIcon, Sparkles, Check, AlertCircle } from 'lucide-react';
 import { Book, BookStatus } from '../../types';
 import { PRESET_COVER_SUGGESTIONS } from '../../data/initialData';
+import { uploadImageToServer } from '../../utils/helpers';
 
 interface BookFormModalProps {
   isOpen: boolean;
@@ -81,8 +82,8 @@ export const BookFormModal: React.FC<BookFormModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle local file upload via FileReader -> Base64
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle file upload directly to server (/uploads/...) so all users see it
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -91,20 +92,17 @@ export const BookFormModal: React.FC<BookFormModalProps> = ({
       return;
     }
 
-    // Limit to ~3MB to avoid excessive localStorage bloat
-    if (file.size > 3 * 1024 * 1024) {
-      setErrorMessage('La imagen es demasiado pesada. Elige una de menos de 3MB.');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setCoverUrl(reader.result);
-        setErrorMessage('');
+    setErrorMessage('');
+    try {
+      const publicUrl = await uploadImageToServer(file, 'portada');
+      if (publicUrl) {
+        setCoverUrl(publicUrl);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setErrorMessage('Error al subir la imagen. Intenta con otra imagen.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {

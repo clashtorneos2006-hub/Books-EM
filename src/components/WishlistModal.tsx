@@ -3,12 +3,13 @@ import { X, Heart, Trash2, MessageCircle } from 'lucide-react';
 import { Book, StoreSettings } from '../types';
 import { formatPrice, generateWishlistWhatsAppUrl, getStatusDetails, FALLBACK_BOOK_COVER } from '../utils/helpers';
 import { BcvRates, calculateBcvBreakdown, convertCurrency, formatCurrencyAmount } from '../services/bcvRates';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 interface WishlistModalProps {
   isOpen: boolean;
   wishlistIds: string[];
   allBooks: Book[];
-  settings: StoreSettings;
+  settings?: StoreSettings;
   bcvRates?: BcvRates;
   onClose: () => void;
   onRemoveFromWishlist: (id: string) => void;
@@ -25,6 +26,8 @@ export const WishlistModal: React.FC<WishlistModalProps> = ({
   onRemoveFromWishlist,
   onSelectBook,
 }) => {
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -53,7 +56,7 @@ export const WishlistModal: React.FC<WishlistModalProps> = ({
     }, 0);
   }
 
-  const whatsappUrl = generateWishlistWhatsAppUrl(savedBooks, settings, bcvRates);
+  const whatsappUrl = generateWishlistWhatsAppUrl(savedBooks, safeSettings, bcvRates);
 
   return (
     <div
@@ -122,7 +125,7 @@ export const WishlistModal: React.FC<WishlistModalProps> = ({
                       <p className="text-xs text-[#735F52] truncate">{book.author}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <span className="text-xs font-bold text-[#5C3218]">
-                          {formatPrice(book.price, settings.currencySymbol, book.currency || 'USD')}
+                          {formatPrice(book.price, safeSettings.currencySymbol, book.currency || 'USD')}
                         </span>
                         {bcvRates && (book.currency || 'USD') !== 'VES' && (
                           <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
@@ -172,7 +175,7 @@ export const WishlistModal: React.FC<WishlistModalProps> = ({
                 )}
               </div>
               <span className="text-2xl font-extrabold text-[#5C3218]">
-                {formatPrice(totalPrice, settings.currencySymbol)}
+                {formatPrice(totalPrice, safeSettings.currencySymbol)}
               </span>
             </div>
 

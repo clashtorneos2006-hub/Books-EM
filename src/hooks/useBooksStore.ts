@@ -300,9 +300,18 @@ export function useBooksStore() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newBook),
-    }).catch((err) => {
-      console.warn('Error syncing new book to server:', err);
-    });
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const savedBook = await res.json();
+          if (savedBook && savedBook.id) {
+            setBooks((prev) => prev.map((b) => (b.id === newBook.id ? savedBook : b)));
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Error syncing new book to server:', err);
+      });
 
     return newBook;
   };
@@ -326,14 +335,26 @@ export function useBooksStore() {
       setSelectedBook(sanitizedBook);
     }
 
-    // Persistent server sync
+    // Persistent server sync with server response processing
     fetch(`/api/books/${encodeURIComponent(sanitizedBook.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sanitizedBook),
-    }).catch((err) => {
-      console.warn('Error syncing book update to server:', err);
-    });
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const savedBook = await res.json();
+          if (savedBook && savedBook.id) {
+            setBooks((prev) => prev.map((b) => (b.id === savedBook.id ? savedBook : b)));
+            if (selectedBook?.id === savedBook.id) {
+              setSelectedBook(savedBook);
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Error syncing book update to server:', err);
+      });
 
     return sanitizedBook;
   };

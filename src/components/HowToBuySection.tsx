@@ -2,12 +2,14 @@ import React from 'react';
 import { MessageCircle, CheckCircle2, CreditCard, Send, Sparkles } from 'lucide-react';
 import { StoreSettings } from '../types';
 import { BotanicalSprig } from './BotanicalElements';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 interface HowToBuySectionProps {
-  settings: StoreSettings;
+  settings?: StoreSettings;
 }
 
 export const HowToBuySection: React.FC<HowToBuySectionProps> = ({ settings }) => {
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   return (
     <section id="how-to-buy-section" className="py-16 bg-[#F5EFEB] border-y border-[#EAE0D2]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -77,7 +79,7 @@ export const HowToBuySection: React.FC<HowToBuySectionProps> = ({ settings }) =>
                 <CreditCard className="w-5 h-5 text-[#8C5E3C]" /> Métodos de Pago Aceptados
               </h4>
               <p className="text-xs text-[#735F52] mt-1">
-                {settings.paymentMethods}
+                {safeSettings.paymentMethods}
               </p>
             </div>
             <div className="shrink-0">
@@ -90,10 +92,10 @@ export const HowToBuySection: React.FC<HowToBuySectionProps> = ({ settings }) =>
 
           <div className="pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-[#735F52]">
             <div>
-              <span className="font-semibold text-[#3B2213]">Sede y Envíos:</span> {settings.storeLocation}
+              <span className="font-semibold text-[#3B2213]">Sede y Envíos:</span> {safeSettings.storeLocation}
             </div>
             <div>
-              <span className="font-semibold text-[#3B2213]">Contacto:</span> {settings.contactEmail}
+              <span className="font-semibold text-[#3B2213]">Contacto:</span> {safeSettings.contactEmail}
             </div>
           </div>
         </div>

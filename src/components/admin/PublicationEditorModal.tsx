@@ -22,7 +22,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Book, BookStatus, CurrencyCode } from '../../types';
-import { formatPrice, getStatusDetails, compressImageFile, FALLBACK_BOOK_COVER } from '../../utils/helpers';
+import { formatPrice, getStatusDetails, compressImageFile, uploadImageToServer, FALLBACK_BOOK_COVER } from '../../utils/helpers';
 import { BcvRates, calculateBcvBreakdown, getCurrencySymbol } from '../../services/bcvRates';
 
 interface PublicationEditorModalProps {
@@ -159,16 +159,17 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
     setErrorMessage('');
 
     try {
-      const compressedResults = await Promise.all(
-        validFiles.map((file) => compressImageFile(file, 1080, 1440, 0.82))
+      const uploadResults = await Promise.all(
+        validFiles.map((file, idx) => uploadImageToServer(file, `libro_${idx + 1}`))
       );
-      setImages((prev) => [...prev, ...compressedResults]);
+      const validUrls = uploadResults.filter((url): url is string => Boolean(url && url.length > 0));
+      setImages((prev) => [...prev, ...validUrls]);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     } catch (err) {
-      console.error('Error comprimiendo imágenes:', err);
-      setErrorMessage('Hubo un error al procesar las imágenes. Intenta con imágenes más pequeñas.');
+      console.error('Error al subir y optimizar imágenes:', err);
+      setErrorMessage('Hubo un error al procesar y subir las imágenes. Intenta nuevamente.');
     } finally {
       setIsCompressing(false);
     }

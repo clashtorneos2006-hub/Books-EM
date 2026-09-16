@@ -4,10 +4,13 @@ import { StoreSettings } from '../types';
 import { BooksEmLogo } from './BotanicalElements';
 
 interface HeroBannerProps {
-  settings: StoreSettings;
+  settings?: StoreSettings;
+  storeName?: string;
+  tagline?: string;
   totalBooks: number;
   availableCount: number;
-  onScrollToCatalog: () => void;
+  onScrollToCatalog?: () => void;
+  onExploreClick?: () => void;
   onSelectGenre: (genre: string) => void;
   selectedGenre: string;
   catalogs?: string[];
@@ -22,13 +25,18 @@ const DEFAULT_POPULAR_GENRES = [
 ];
 
 export const HeroBanner: React.FC<HeroBannerProps> = ({
+  settings,
+  storeName,
+  tagline,
   totalBooks,
   availableCount,
   onScrollToCatalog,
+  onExploreClick,
   onSelectGenre,
   selectedGenre,
   catalogs,
 }) => {
+  const handleExplore = onScrollToCatalog || onExploreClick || (() => {});
   return (
     <section className="relative overflow-hidden bg-[#EADBD9] border-b border-[#DAC5C2] py-10 sm:py-14 lg:py-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20">
@@ -94,7 +102,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             {/* Action button matching the banner: "Explora nuestro catálogo" */}
             <div className="flex flex-wrap items-center justify-center lg:justify-start gap-4 mt-2">
               <button
-                onClick={onScrollToCatalog}
+                onClick={handleExplore}
                 id="hero-explore-btn"
                 className="inline-flex items-center gap-2 bg-[#5C3218] hover:bg-[#472611] text-[#FDFBF7] px-8 py-3.5 rounded-2xl font-bold text-sm shadow-md hover:shadow-lg transition-all cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0"
               >
@@ -122,7 +130,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                       key={genre}
                       onClick={() => {
                         onSelectGenre(isTodos ? '' : genre);
-                        onScrollToCatalog();
+                        handleExplore();
                       }}
                       className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                         isActive

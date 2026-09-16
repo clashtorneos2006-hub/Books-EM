@@ -3,14 +3,16 @@ import { Phone, Mail, MapPin, Download } from 'lucide-react';
 import { StoreSettings } from '../types';
 import { BooksEmLogo } from './BotanicalElements';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 interface FooterProps {
-  settings: StoreSettings;
+  settings?: StoreSettings;
   onOpenInstallPrompt?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ settings, onOpenInstallPrompt }) => {
   const { isInstalled } = usePWAInstall();
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   return (
     <footer className="bg-[#2C211A] text-[#D8C7B9] border-t border-[#443328] pt-14 pb-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -21,7 +23,7 @@ export const Footer: React.FC<FooterProps> = ({ settings, onOpenInstallPrompt })
               <BooksEmLogo size="sm" showSubtitle={false} showSlogan={false} theme="dark" className="items-start text-left" />
             </div>
             <p className="text-xs sm:text-sm text-[#BBA595] leading-relaxed max-w-md">
-              {settings.tagline}. Seleccionamos títulos que despiertan la imaginación, enriquecen el pensamiento crítico y acompañan tus momentos de lectura.
+              {safeSettings.tagline}. Seleccionamos títulos que despiertan la imaginación, enriquecen el pensamiento crítico y acompañan tus momentos de lectura.
             </p>
             <div className="pt-2">
               <p className="font-serif-title italic text-xs text-[#9E8777]">
@@ -75,15 +77,15 @@ export const Footer: React.FC<FooterProps> = ({ settings, onOpenInstallPrompt })
             <ul className="space-y-2.5 text-xs text-[#BBA595]">
               <li className="flex items-center gap-2">
                 <Phone className="w-3.5 h-3.5 text-[#C49B76]" />
-                <span>WhatsApp: +{settings.whatsappNumber || 'No configurado'}</span>
+                <span>WhatsApp: +{safeSettings.whatsappNumber || 'No configurado'}</span>
               </li>
               <li className="flex items-center gap-2">
                 <Mail className="w-3.5 h-3.5 text-[#C49B76]" />
-                <span>{settings.contactEmail}</span>
+                <span>{safeSettings.contactEmail}</span>
               </li>
               <li className="flex items-center gap-2">
                 <MapPin className="w-3.5 h-3.5 text-[#C49B76]" />
-                <span>{settings.storeLocation}</span>
+                <span>{safeSettings.storeLocation}</span>
               </li>
             </ul>
           </div>
@@ -92,7 +94,7 @@ export const Footer: React.FC<FooterProps> = ({ settings, onOpenInstallPrompt })
         {/* Bottom Bar: Copyright (No admin access here) */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#8F796B]">
           <div className="flex items-center gap-2">
-            <span>© {new Date().getFullYear()} {settings.storeName}. Todos los derechos reservados.</span>
+            <span>© {new Date().getFullYear()} {safeSettings.storeName}. Todos los derechos reservados.</span>
           </div>
           <div className="text-[11px] text-[#8F796B]">
             <span>Cotizaciones con equivalencia oficial BCV del Banco Central de Venezuela</span>

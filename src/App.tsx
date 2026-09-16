@@ -19,6 +19,7 @@ import { PublicationEditorModal } from './components/admin/PublicationEditorModa
 import { MessageCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { cleanPhoneNumber } from './utils/helpers';
 import { Book } from './types';
+import { DEFAULT_STORE_SETTINGS } from './data/initialData';
 
 // Code-splitting: Only load the heavy admin panel bundle when admin logs in
 const AdminPanel = React.lazy(() =>
@@ -92,11 +93,12 @@ export default function App() {
     }
   };
 
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   const availableBooksCount = books.filter((b) => b.status === 'disponible').length;
-  const cleanPhone = cleanPhoneNumber(settings.whatsappNumber);
+  const cleanPhone = cleanPhoneNumber(safeSettings.whatsappNumber);
   const floatingWhatsAppUrl = cleanPhone
     ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-        `¡Hola ${settings.storeName}! 👋 Tengo una consulta sobre su catálogo de libros.`
+        `¡Hola ${safeSettings.storeName}! 👋 Tengo una consulta sobre su catálogo de libros.`
       )}`
     : '#';
 
@@ -106,7 +108,7 @@ export default function App() {
       <AdminLoginView
         onLogin={loginAdmin}
         onBackToStore={() => setIsAdminOpen(false)}
-        storeName={settings.storeName}
+        storeName={safeSettings.storeName}
       />
     );
   }
@@ -124,7 +126,7 @@ export default function App() {
       >
         <AdminPanel
           books={books}
-          settings={settings}
+          settings={safeSettings}
           bcvRates={bcvRates}
           onClose={() => setIsAdminOpen(false)}
           onLogout={logoutAdmin}
@@ -157,8 +159,8 @@ export default function App() {
       {/* Intro Botanical Splash animation on first load */}
       {showIntro && (
         <AppIntroSplash
-          storeName={settings.storeName}
-          tagline={settings.tagline}
+          storeName={safeSettings.storeName}
+          tagline={safeSettings.tagline}
           isExiting={isIntroExiting}
           onComplete={() => {
             setIsIntroExiting(true);
@@ -177,7 +179,8 @@ export default function App() {
 
       {/* Primary Header with BCV Currency Indicator & Navigation */}
       <Header
-        storeName={settings.storeName}
+        settings={safeSettings}
+        storeName={safeSettings.storeName}
         bcvRates={bcvRates}
         wishlistCount={wishlistIds.length}
         isAdminLoggedIn={isAdminLoggedIn}
@@ -185,16 +188,25 @@ export default function App() {
         onOpenAdmin={() => setIsAdminOpen(true)}
         onScrollToCatalog={scrollToCatalog}
         onScrollToHowToBuy={scrollToHowToBuy}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onOpenInstallPrompt={() => setManualInstallTrigger(true)}
         onRefreshBcvRates={refreshBcvRates}
       />
 
       <div className="flex-1 flex flex-col">
         {/* Hero Banner with Literary Presentation & Quick Action */}
         <HeroBanner
-          storeName={settings.storeName}
-          tagline={settings.tagline}
+          settings={safeSettings}
+          storeName={safeSettings.storeName}
+          tagline={safeSettings.tagline}
+          totalBooks={books.length}
           availableCount={availableBooksCount}
+          onScrollToCatalog={scrollToCatalog}
           onExploreClick={scrollToCatalog}
+          selectedGenre={selectedGenre}
+          onSelectGenre={setSelectedGenre}
+          catalogs={catalogs}
         />
 
         {/* Main Content Area */}
@@ -202,7 +214,7 @@ export default function App() {
           {/* Public Catalog with Filters, Search, and Book Cards */}
           <BookCatalog
             books={books}
-            settings={settings}
+            settings={safeSettings}
             wishlistIds={wishlistIds}
             bcvRates={bcvRates}
             catalogs={catalogs}
@@ -220,12 +232,12 @@ export default function App() {
           />
 
           {/* 3-Step WhatsApp Purchase Guide & Payment Info */}
-          <HowToBuySection settings={settings} />
+          <HowToBuySection settings={safeSettings} />
         </main>
 
         {/* Footer */}
         <Footer
-          settings={settings}
+          settings={safeSettings}
           onOpenInstallPrompt={() => setManualInstallTrigger(true)}
         />
 
@@ -233,7 +245,7 @@ export default function App() {
         {selectedBook && (
           <BookDetailModal
             book={selectedBook}
-            settings={settings}
+            settings={safeSettings}
             bcvRates={bcvRates}
             isWishlisted={wishlistIds.includes(selectedBook.id)}
             onToggleWishlist={toggleWishlist}
@@ -252,7 +264,7 @@ export default function App() {
           isOpen={isWishlistOpen}
           wishlistIds={wishlistIds}
           allBooks={books}
-          settings={settings}
+          settings={safeSettings}
           bcvRates={bcvRates}
           onClose={() => setIsWishlistOpen(false)}
           onRemoveFromWishlist={toggleWishlist}
@@ -263,7 +275,7 @@ export default function App() {
         <PublicationEditorModal
           isOpen={isStoreEditModalOpen}
           bookToEdit={storeEditingBook}
-          currencySymbol={settings.currencySymbol}
+          currencySymbol={safeSettings.currencySymbol}
           bcvRates={bcvRates}
           catalogs={catalogs}
           onClose={() => {

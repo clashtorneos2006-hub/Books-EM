@@ -5,10 +5,11 @@ import { BookCard } from './BookCard';
 import { BotanicalSprig, BotanicalDivider } from './BotanicalElements';
 import { BcvRates, convertCurrency } from '../services/bcvRates';
 import { matchBookSearch, normalizeSearch } from '../utils/helpers';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 interface BookCatalogProps {
   books: Book[];
-  settings: StoreSettings;
+  settings?: StoreSettings;
   wishlistIds: string[];
   bcvRates?: BcvRates;
   catalogs?: string[];
@@ -37,6 +38,7 @@ export const BookCatalog: React.FC<BookCatalogProps> = ({
   isAdminLoggedIn = false,
   onEditBook,
 }) => {
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   const [selectedAuthor, setSelectedAuthor] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [featuredOnly, setFeaturedOnly] = useState<boolean>(false);
@@ -367,7 +369,7 @@ export const BookCatalog: React.FC<BookCatalogProps> = ({
             <BookCard
               key={book.id}
               book={book}
-              settings={settings}
+              settings={safeSettings}
               bcvRates={bcvRates}
               isWishlisted={wishlistIds.includes(book.id)}
               onToggleWishlist={onToggleWishlist}

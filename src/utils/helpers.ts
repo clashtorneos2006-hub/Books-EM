@@ -1,5 +1,6 @@
 import { Book, BookStatus, CurrencyCode, StoreSettings } from '../types';
 import { BcvRates, calculateBcvBreakdown, formatCurrencyAmount } from '../services/bcvRates';
+import { DEFAULT_STORE_SETTINGS } from '../data/initialData';
 
 export function formatPrice(
   amount: number,
@@ -39,7 +40,8 @@ export function getStatusDetails(status: BookStatus) {
   }
 }
 
-export function cleanPhoneNumber(phone: string): string {
+export function cleanPhoneNumber(phone?: string): string {
+  if (!phone || typeof phone !== 'string') return '';
   return phone.replace(/[^0-9]/g, '');
 }
 
@@ -80,13 +82,14 @@ export function matchBookSearch(book: Book, query: string): boolean {
 
 export function buildWhatsAppMessage(
   book: Book,
-  settings: StoreSettings,
+  settings?: StoreSettings,
   rates?: BcvRates
 ): string {
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
   const statusInfo = getStatusDetails(book.status);
-  const template = settings.whatsappTemplate || '¡Hola {tienda}! Me interesa comprar el libro "{titulo}" de {autor}.';
+  const template = safeSettings.whatsappTemplate || '¡Hola {tienda}! Me interesa comprar el libro "{titulo}" de {autor}.';
   const currency: CurrencyCode = book.currency || 'USD';
-  const priceDisplay = formatPrice(book.price, settings.currencySymbol, currency);
+  const priceDisplay = formatPrice(book.price, safeSettings.currencySymbol, currency);
 
   let bcvPriceDisplay = priceDisplay;
   if (rates && currency !== 'VES') {
@@ -99,7 +102,7 @@ export function buildWhatsAppMessage(
     .replace(/{autor}/gi, book.author)
     .replace(/{precio}/gi, bcvPriceDisplay)
     .replace(/{estado}/gi, statusInfo.label)
-    .replace(/{tienda}/gi, settings.storeName)
+    .replace(/{tienda}/gi, safeSettings.storeName || 'Books EM')
     .replace(/{genero}/gi, book.genre)
     .replace(/{id}/gi, book.id);
 
@@ -108,12 +111,13 @@ export function buildWhatsAppMessage(
 
 export function generateWhatsAppUrl(
   book: Book,
-  settings: StoreSettings,
+  settings?: StoreSettings,
   rates?: BcvRates
 ): string {
-  const rawNumber = settings.whatsappNumber || '';
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
+  const rawNumber = safeSettings.whatsappNumber || '';
   const cleanNumber = cleanPhoneNumber(rawNumber);
-  const text = buildWhatsAppMessage(book, settings, rates);
+  const text = buildWhatsAppMessage(book, safeSettings, rates);
 
   if (!cleanNumber) {
     return `https://wa.me/?text=${encodeURIComponent(text)}`;
@@ -123,16 +127,17 @@ export function generateWhatsAppUrl(
 
 export function generateWishlistWhatsAppUrl(
   books: Book[],
-  settings: StoreSettings,
+  settings?: StoreSettings,
   rates?: BcvRates
 ): string {
-  const rawNumber = settings.whatsappNumber || '';
+  const safeSettings = settings || DEFAULT_STORE_SETTINGS;
+  const rawNumber = safeSettings.whatsappNumber || '';
   const cleanNumber = cleanPhoneNumber(rawNumber);
 
   const bookListStr = books
     .map((b, i) => {
       const cur: CurrencyCode = b.currency || 'USD';
-      const pStr = formatPrice(b.price, settings.currencySymbol, cur);
+      const pStr = formatPrice(b.price, safeSettings.currencySymbol, cur);
       let bcvExtra = '';
       if (rates && cur !== 'VES') {
         const bd = calculateBcvBreakdown(b.price, cur, rates);
@@ -142,7 +147,7 @@ export function generateWishlistWhatsAppUrl(
     })
     .join('\n');
 
-  const text = `¡Hola ${settings.storeName}! 👋📚\nEstuve revisando su catálogo y me gustaría cotizar o adquirir los siguientes ${books.length} libros:\n\n${bookListStr}\n\n¿Tienen disponibilidad y cómo procedemos con el pago y envío según tasa oficial BCV? ¡Muchas gracias!`;
+  const text = `¡Hola ${safeSettings.storeName || 'Books EM'}! 👋📚\nEstuve revisando su catálogo y me gustaría cotizar o adquirir los siguientes ${books.length} libros:\n\n${bookListStr}\n\n¿Tienen disponibilidad y cómo procedemos con el pago y envío según tasa oficial BCV? ¡Muchas gracias!`;
 
   if (!cleanNumber) {
     return `https://wa.me/?text=${encodeURIComponent(text)}`;
@@ -224,4 +229,50 @@ export async function compressImageFile(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Uploads an image to the server so it becomes a permanent public URL (/uploads/...)
+ * accessible to all users, visitors, and devices across the web app.
+ */
+export async function uploadImageToServer(file: File, prefix = 'foto'): Promise<string> {
+  // Compress client-side first for fast transfer and optimal sizing (~50-80KB)
+  const compressedDataUrl = await compressImageFile(file, 1200, 1600, 0.84);
+  if (!compressedDataUrl) {
+    return '';
+  }
+
+  try {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dataUrl: compressedDataUrl,
+        filename: file.name ? `${prefix}_${file.name}` : prefix,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.url) {
+        return data.url;
+      }
+    }
+  } catch (err) {
+    console.warn('Direct image upload to /api/upload failed, using compressed fallback:', err);
+  }
+
+  // Graceful fallback to dataUrl if offline or standalone
+  return compressedDataUrl;
+}
+
+/**
+ * Uploads multiple images to the server in parallel.
+ */
+export async function uploadImagesBatch(files: File[], prefix = 'foto'): Promise<string[]> {
+  const results = await Promise.all(
+    files.map((file, idx) => uploadImageToServer(file, `${prefix}_${idx + 1}`))
+  );
+  return results.filter(Boolean);
+}
+
 
