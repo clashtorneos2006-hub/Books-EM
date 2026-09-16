@@ -408,8 +408,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </button>
         </div>
 
-        {/* Right: Current Section Indicator (Aroma de BCV removed from header as requested) */}
+        {/* Right: Current Section Indicator + Firebase Live Status */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Firebase Realtime Connection Badge */}
+          <div
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold shadow-2xs"
+            title="Conexión en tiempo real activa: los cambios se sincronizan inmediatamente con todos los lectores"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="hidden sm:inline font-bold">Firebase en vivo</span>
+            <span className="sm:hidden font-bold">En vivo</span>
+          </div>
+
           {/* Section Indicator */}
           <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF7F2] border border-[#E8DFC8] rounded-xl text-xs font-bold text-[#5C3218]">
             {activeTab === 'publications' && (

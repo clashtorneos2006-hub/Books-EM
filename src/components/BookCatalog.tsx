@@ -166,6 +166,14 @@ export const BookCatalog: React.FC<BookCatalogProps> = ({
         </div>
 
         <div className="flex items-center flex-wrap gap-2.5">
+          <span
+            className="inline-flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50/90 border border-emerald-200/80 px-2.5 py-1.5 rounded-xl shadow-2xs font-medium"
+            title="Catálogo sincronizado en tiempo real con Firebase Firestore"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>En vivo</span>
+          </span>
+
           <span className="text-xs sm:text-sm text-[#735F52] bg-white px-3.5 py-1.5 rounded-xl border border-[#E8DFC8] shadow-2xs">
             <strong className="text-[#3B2213]">{filteredBooks.length}</strong> de {books.length} títulos
           </span>

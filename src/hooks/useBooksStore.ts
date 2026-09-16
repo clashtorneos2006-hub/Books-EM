@@ -2,6 +2,18 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Book, BookStatus, StoreSettings } from '../types';
 import { INITIAL_BOOKS, DEFAULT_STORE_SETTINGS } from '../data/initialData';
 import { BcvRates, getStoredBcvRates, syncBcvRates } from '../services/bcvRates';
+import {
+  subscribeToBooks,
+  subscribeToSettings,
+  subscribeToCatalogs,
+  saveBookToFirestore,
+  deleteBookFromFirestore,
+  updateBookStatusInFirestore,
+  toggleBookFeaturedInFirestore,
+  saveSettingsToFirestore,
+  saveCatalogsToFirestore,
+  seedFirestoreIfEmpty,
+} from '../services/firebase';
 
 const BOOKS_STORAGE_KEY = 'books_em_catalog_v1';
 const SETTINGS_STORAGE_KEY = 'books_em_settings_v1';
@@ -249,16 +261,64 @@ export function useBooksStore() {
     }
   }, []);
 
-  // Initial fetch and continuous real-time sync for customers and admin
+  // Initial fetch and continuous real-time sync with Firebase Firestore
+  const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
+
   useEffect(() => {
+    // Seed Firestore on startup if empty
+    seedFirestoreIfEmpty(INITIAL_BOOKS, DEFAULT_STORE_SETTINGS, DEFAULT_CATALOGS).catch((err) => {
+      console.warn('Firestore seeding check failed:', err);
+    });
+
+    // 1. Instant Real-time listener for all books (adds, edits, status, deletions)
+    const unsubBooks = subscribeToBooks(
+      (firestoreBooks) => {
+        if (Array.isArray(firestoreBooks) && firestoreBooks.length > 0) {
+          setBooks((prev) => {
+            const prevSerialized = JSON.stringify(prev);
+            const nextSerialized = JSON.stringify(firestoreBooks);
+            if (prevSerialized !== nextSerialized) {
+              return firestoreBooks;
+            }
+            return prev;
+          });
+        }
+        setIsFirebaseConnected(true);
+      },
+      (err) => {
+        console.warn('Firebase real-time books listener:', err);
+        setIsFirebaseConnected(false);
+      }
+    );
+
+    // 2. Instant Real-time listener for store settings (WhatsApp number, header title, etc.)
+    const unsubSettings = subscribeToSettings(
+      (firestoreSettings) => {
+        if (firestoreSettings && firestoreSettings.storeName) {
+          setSettings((prev) => ({ ...prev, ...firestoreSettings }));
+        }
+      },
+      (err) => {
+        console.warn('Firebase real-time settings listener:', err);
+      }
+    );
+
+    // 3. Instant Real-time listener for catalogs and genres
+    const unsubCatalogs = subscribeToCatalogs(
+      (firestoreCatalogs) => {
+        if (Array.isArray(firestoreCatalogs) && firestoreCatalogs.length > 0) {
+          setCatalogs(firestoreCatalogs);
+        }
+      },
+      (err) => {
+        console.warn('Firebase real-time catalogs listener:', err);
+      }
+    );
+
+    // Also keep background sync with server API as dual-redundancy
     fetchServerBooks();
     fetchServerSettings();
     fetchServerCatalogs();
-
-    // Poll every 5 seconds so any customer or admin tab receives instant updates
-    const interval = setInterval(() => {
-      fetchServerBooks();
-    }, 5000);
 
     const onFocus = () => {
       fetchServerBooks();
@@ -270,13 +330,15 @@ export function useBooksStore() {
     window.addEventListener('visibilitychange', onFocus);
 
     return () => {
-      clearInterval(interval);
+      unsubBooks();
+      unsubSettings();
+      unsubCatalogs();
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('visibilitychange', onFocus);
     };
   }, [fetchServerBooks, fetchServerSettings, fetchServerCatalogs]);
 
-  // CRUD Methods with optimistic UI + persistent server sync
+  // CRUD Methods with optimistic UI + Firebase Real-time + persistent server sync
   const addBook = (newBookData: Omit<Book, 'id' | 'createdAt'>) => {
     const images = Array.isArray(newBookData.images) && newBookData.images.length > 0
       ? newBookData.images.filter(Boolean)
@@ -295,7 +357,12 @@ export function useBooksStore() {
     // Optimistic UI update
     setBooks((prev) => [newBook, ...prev]);
 
-    // Persistent server sync
+    // Real-time Firebase Firestore broadcast to all connected visitors
+    saveBookToFirestore(newBook).catch((err) => {
+      console.warn('Firebase save book error:', err);
+    });
+
+    // Dual-layer server sync
     fetch('/api/books', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -335,7 +402,12 @@ export function useBooksStore() {
       setSelectedBook(sanitizedBook);
     }
 
-    // Persistent server sync with server response processing
+    // Real-time Firebase Firestore broadcast
+    saveBookToFirestore(sanitizedBook).catch((err) => {
+      console.warn('Firebase update book error:', err);
+    });
+
+    // Dual-layer server sync
     fetch(`/api/books/${encodeURIComponent(sanitizedBook.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -367,7 +439,12 @@ export function useBooksStore() {
       setSelectedBook(null);
     }
 
-    // Persistent server sync
+    // Real-time Firebase Firestore broadcast
+    deleteBookFromFirestore(id).catch((err) => {
+      console.warn('Firebase delete book error:', err);
+    });
+
+    // Dual-layer server sync
     fetch(`/api/books/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }).catch((err) => {
@@ -376,9 +453,17 @@ export function useBooksStore() {
   };
 
   const toggleFeatured = (id: string) => {
+    const currentBook = books.find((b) => b.id === id);
+    const newFeatured = currentBook ? !currentBook.featured : true;
+
     setBooks((prev) =>
       prev.map((b) => (b.id === id ? { ...b, featured: !b.featured } : b))
     );
+
+    // Real-time Firebase Firestore broadcast
+    toggleBookFeaturedInFirestore(id, newFeatured).catch((err) => {
+      console.warn('Firebase toggle featured error:', err);
+    });
 
     fetch(`/api/books/${encodeURIComponent(id)}/featured`, {
       method: 'PATCH',
@@ -392,6 +477,11 @@ export function useBooksStore() {
       prev.map((b) => (b.id === id ? { ...b, status } : b))
     );
 
+    // Real-time Firebase Firestore broadcast
+    updateBookStatusInFirestore(id, status).catch((err) => {
+      console.warn('Firebase status update error:', err);
+    });
+
     fetch(`/api/books/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -404,6 +494,10 @@ export function useBooksStore() {
   const updateSettings = (newFields: Partial<StoreSettings>) => {
     setSettings((prev) => {
       const merged = { ...prev, ...newFields };
+      // Real-time Firebase Firestore broadcast
+      saveSettingsToFirestore(merged).catch((err) => {
+        console.warn('Firebase settings update error:', err);
+      });
       fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -425,6 +519,11 @@ export function useBooksStore() {
     localStorage.removeItem(WISHLIST_STORAGE_KEY);
     localStorage.removeItem(CATALOGS_STORAGE_KEY);
 
+    // Broadcast reset to Firestore
+    seedFirestoreIfEmpty(INITIAL_BOOKS, DEFAULT_STORE_SETTINGS, DEFAULT_CATALOGS).catch(() => {});
+    saveSettingsToFirestore(DEFAULT_STORE_SETTINGS).catch(() => {});
+    saveCatalogsToFirestore(DEFAULT_CATALOGS).catch(() => {});
+
     fetch('/api/reset', { method: 'POST' }).catch((err) => {
       console.warn('Error resetting on server:', err);
     });
@@ -440,6 +539,11 @@ export function useBooksStore() {
     }
     const updated = [...catalogs, trimmed];
     setCatalogs(updated);
+
+    // Real-time Firebase Firestore broadcast
+    saveCatalogsToFirestore(updated).catch((err) => {
+      console.warn('Firebase catalogs update error:', err);
+    });
 
     fetch('/api/catalogs', {
       method: 'PUT',
@@ -471,6 +575,11 @@ export function useBooksStore() {
     const updatedCatalogs = catalogs.map((c) => (c === oldName ? trimmedNew : c));
     setCatalogs(updatedCatalogs);
 
+    // Real-time Firebase Firestore broadcast
+    saveCatalogsToFirestore(updatedCatalogs).catch((err) => {
+      console.warn('Firebase update catalog error:', err);
+    });
+
     fetch('/api/catalogs', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -499,6 +608,11 @@ export function useBooksStore() {
     const updated = catalogs.filter((c) => c !== nameToDelete);
     setCatalogs(updated);
 
+    // Real-time Firebase Firestore broadcast
+    saveCatalogsToFirestore(updated).catch((err) => {
+      console.warn('Firebase delete catalog error:', err);
+    });
+
     fetch('/api/catalogs', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -522,6 +636,9 @@ export function useBooksStore() {
 
   const reorderCatalogs = (newOrder: string[]) => {
     setCatalogs(newOrder);
+    saveCatalogsToFirestore(newOrder).catch((err) => {
+      console.warn('Firebase reorder catalogs error:', err);
+    });
     fetch('/api/catalogs', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -533,6 +650,9 @@ export function useBooksStore() {
 
   const resetCatalogs = () => {
     setCatalogs(DEFAULT_CATALOGS);
+    saveCatalogsToFirestore(DEFAULT_CATALOGS).catch((err) => {
+      console.warn('Firebase reset catalogs error:', err);
+    });
     fetch('/api/catalogs', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -605,6 +725,7 @@ export function useBooksStore() {
     books,
     settings,
     bcvRates,
+    isFirebaseConnected,
     refreshBcvRates: () => syncBcvRates(true).then((rates) => {
       setBcvRates(rates);
       return rates;
