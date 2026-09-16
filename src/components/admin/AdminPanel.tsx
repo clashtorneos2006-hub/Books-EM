@@ -108,6 +108,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Handle direct edit request from parent or store
   useEffect(() => {
     if (directEditBook) {
+      setActiveTab('publications');
       setEditingBook(directEditBook);
       setSelectedBookId(directEditBook.id);
       setIsEditorModalOpen(true);
@@ -204,14 +205,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Handle saving book data
   const handleSaveBook = (bookData: Omit<Book, 'id' | 'createdAt'>, existingId?: string) => {
     if (existingId) {
-      const existing = books.find((b) => b.id === existingId);
-      if (existing) {
-        const updated = { ...existing, ...bookData };
-        onUpdateBook(updated);
-        showToast(`Publicación «${updated.title}» modificada con éxito`);
-      }
+      const existing = books.find((b) => b.id === existingId) || editingBook;
+      const finalImages = (bookData.images && bookData.images.length > 0)
+        ? bookData.images
+        : (bookData.coverUrl ? [bookData.coverUrl] : (existing?.images || []));
+      const finalCover = finalImages[0] || bookData.coverUrl || existing?.coverUrl || '';
+
+      const updated: Book = {
+        ...(existing || {}),
+        ...bookData,
+        id: existingId,
+        createdAt: existing?.createdAt || Date.now(),
+        coverUrl: finalCover,
+        images: finalImages.length > 0 ? finalImages : [finalCover],
+        price: Number(bookData.price) || 0,
+      };
+      onUpdateBook(updated);
+      showToast(`Publicación «${updated.title}» modificada con éxito`);
     } else {
-      onAddBook(bookData);
+      const created = onAddBook(bookData);
       showToast(`Nueva publicación «${bookData.title}» agregada al catálogo`);
     }
   };
@@ -313,9 +325,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     >
       {/* Toast Notification */}
       {feedbackToast && (
-        <div className="fixed top-5 right-5 z-60 bg-[#3B2213] text-[#FAF7F2] px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold flex items-center gap-2 border border-[#8C5E3C] animate-in fade-in slide-in-from-top-3 duration-200">
+        <div className="fixed top-5 right-5 z-60 bg-[#3B2213] text-[#FAF7F2] px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold flex items-center gap-3 border border-[#8C5E3C] animate-in fade-in slide-in-from-top-3 duration-200">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{feedbackToast}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+            title="Ver los cambios en vivo en la tienda para los clientes"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Ver en Tienda</span>
+          </button>
         </div>
       )}
 
@@ -338,11 +359,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <button
             onClick={onClose}
             id="admin-return-store-btn"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#FAF7F2] hover:bg-[#F2ECE4] text-[#5C3218] border border-[#E8DFC8] rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs hover:shadow-xs"
-            title="Ver la tienda y modificaciones en tiempo real"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#FAF7F2] hover:bg-[#F2ECE4] text-[#5C3218] border border-[#E8DFC8] rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs hover:shadow-xs group"
+            title="Ver la tienda y modificaciones en tiempo real tal como los clientes"
           >
-            <Eye className="w-4 h-4 text-[#5C3218]" />
+            <Eye className="w-4 h-4 text-[#5C3218] group-hover:text-emerald-700 transition-colors" />
             <span>Ver Tienda</span>
+            <span className="hidden sm:inline text-[10px] text-stone-500 font-normal ml-0.5">(clientes)</span>
           </button>
 
           {/* Button: Exit / Logout */}

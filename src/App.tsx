@@ -1,6 +1,6 @@
 /**
  * Books EM - Librería y Tienda de Libros Online
- * Complete, responsive, client-side store with WhatsApp checkout and private Admin panel.
+ * Complete, responsive, full-stack store with WhatsApp checkout, real-time client sync, and private Admin panel.
  */
 
 import React, { useState } from 'react';
@@ -15,7 +15,8 @@ import { WishlistModal } from './components/WishlistModal';
 import { AdminLoginView } from './components/admin/AdminLoginView';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { AppIntroSplash } from './components/AppIntroSplash';
-import { MessageCircle, Loader2 } from 'lucide-react';
+import { PublicationEditorModal } from './components/admin/PublicationEditorModal';
+import { MessageCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { cleanPhoneNumber } from './utils/helpers';
 import { Book } from './types';
 
@@ -65,7 +66,17 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('');
   const [directEditBook, setDirectEditBook] = useState<Book | null>(null);
+  const [storeEditingBook, setStoreEditingBook] = useState<Book | null>(null);
+  const [isStoreEditModalOpen, setIsStoreEditModalOpen] = useState(false);
+  const [storeToast, setStoreToast] = useState<string | null>(null);
   const [manualInstallTrigger, setManualInstallTrigger] = useState(false);
+
+  const showStoreToast = (msg: string) => {
+    setStoreToast(msg);
+    setTimeout(() => {
+      setStoreToast((curr) => (curr === msg ? null : curr));
+    }, 4500);
+  };
 
   const scrollToCatalog = () => {
     const el = document.getElementById('catalog-section');
@@ -115,31 +126,24 @@ export default function App() {
           books={books}
           settings={settings}
           bcvRates={bcvRates}
-          onRefreshRates={refreshBcvRates}
-          onUpdateRates={updateBcvRates}
-          catalogs={catalogs}
-          onAddCatalog={addCatalog}
-          onUpdateCatalog={updateCatalog}
-          onDeleteCatalog={deleteCatalog}
-          onReorderCatalogs={reorderCatalogs}
-          onResetCatalogs={resetCatalogs}
-          isExpanded={isAdminOpen}
-          onToggleExpand={setIsAdminOpen}
           onClose={() => setIsAdminOpen(false)}
-          onLogout={() => {
-            logoutAdmin();
-            setIsAdminOpen(false);
-          }}
+          onLogout={logoutAdmin}
           onAddBook={addBook}
           onUpdateBook={updateBook}
           onDeleteBook={deleteBook}
           onToggleFeatured={toggleFeatured}
           onUpdateBookStatus={updateBookStatus}
           onUpdateSettings={updateSettings}
-          onResetDefaults={resetToDefaults}
+          onResetToDefaults={resetToDefaults}
           onImportCatalog={importCatalog}
-          externalSelectedBookId={selectedBook?.id}
-          onSelectBook={setSelectedBook}
+          onRefreshBcvRates={refreshBcvRates}
+          onUpdateBcvRates={updateBcvRates}
+          catalogs={catalogs}
+          onAddCatalog={addCatalog}
+          onUpdateCatalog={updateCatalog}
+          onDeleteCatalog={deleteCatalog}
+          onReorderCatalogs={reorderCatalogs}
+          onResetCatalogs={resetCatalogs}
           directEditBook={directEditBook}
           onClearDirectEditBook={() => setDirectEditBook(null)}
         />
@@ -147,133 +151,181 @@ export default function App() {
     );
   }
 
+  // Public Online Store (Customer View & Live Admin View)
   return (
-    <div className="relative min-h-screen bg-[#EADBD9]">
-      {/* Animated App Intro Splash with Books EM Brand Logo (Guaranteed to be active first) */}
+    <div className="min-h-screen bg-[#FAF7F2] text-[#2C2420] flex flex-col relative selection:bg-[#E8DCCF]">
+      {/* Intro Botanical Splash animation on first load */}
       {showIntro && (
         <AppIntroSplash
-          onComplete={() => {
-            setShowIntro(false);
-            setIsIntroExiting(false);
-          }}
-          onExiting={() => setIsIntroExiting(true)}
           storeName={settings.storeName}
+          tagline={settings.tagline}
+          isExiting={isIntroExiting}
+          onComplete={() => {
+            setIsIntroExiting(true);
+            setTimeout(() => setShowIntro(false), 500);
+          }}
         />
       )}
 
-      {/* Main Store Content - strictly hidden while loading splash is active, then smoothly fades in as splash exits */}
-      <div
-        className={`min-h-screen flex flex-col bg-[#EADBD9] text-[#2C2420] selection:bg-[#DEC9C6] transition-opacity duration-300 ${
-          showIntro && !isIntroExiting ? 'opacity-0 pointer-events-none invisible' : 'opacity-100 visible'
-        }`}
-        aria-hidden={showIntro && !isIntroExiting}
-      >
-        {/* Top Main Navigation */}
-        <Header
-        settings={settings}
-        wishlistCount={wishlistIds.length}
+      {/* Floating Success Toast for Store Actions */}
+      {storeToast && (
+        <div className="fixed top-5 right-5 z-60 bg-[#3B2213] text-[#FAF7F2] px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-3 border border-[#8C5E3C] animate-in fade-in slide-in-from-top-3 duration-200 max-w-md">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{storeToast}</span>
+        </div>
+      )}
+
+      {/* Primary Header with BCV Currency Indicator & Navigation */}
+      <Header
+        storeName={settings.storeName}
         bcvRates={bcvRates}
+        wishlistCount={wishlistIds.length}
+        isAdminLoggedIn={isAdminLoggedIn}
         onOpenWishlist={() => setIsWishlistOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
         onScrollToCatalog={scrollToCatalog}
         onScrollToHowToBuy={scrollToHowToBuy}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        onOpenInstallPrompt={() => setManualInstallTrigger(true)}
+        onRefreshBcvRates={refreshBcvRates}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1">
-        {/* Literary Hero Presentation */}
+      <div className="flex-1 flex flex-col">
+        {/* Hero Banner with Literary Presentation & Quick Action */}
         <HeroBanner
-          settings={settings}
-          totalBooks={books.length}
+          storeName={settings.storeName}
+          tagline={settings.tagline}
           availableCount={availableBooksCount}
-          onScrollToCatalog={scrollToCatalog}
-          onSelectGenre={setSelectedGenre}
-          selectedGenre={selectedGenre}
-          catalogs={catalogs}
+          onExploreClick={scrollToCatalog}
         />
 
-        {/* Public Catalog with Filters, Search, and Book Cards */}
-        <BookCatalog
-          books={books}
+        {/* Main Content Area */}
+        <main className="flex-1">
+          {/* Public Catalog with Filters, Search, and Book Cards */}
+          <BookCatalog
+            books={books}
+            settings={settings}
+            wishlistIds={wishlistIds}
+            bcvRates={bcvRates}
+            catalogs={catalogs}
+            onToggleWishlist={toggleWishlist}
+            onSelectBook={(book) => setSelectedBook(book)}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            selectedGenre={selectedGenre}
+            onSelectGenre={setSelectedGenre}
+            isAdminLoggedIn={isAdminLoggedIn}
+            onEditBook={(book) => {
+              setStoreEditingBook(book);
+              setIsStoreEditModalOpen(true);
+            }}
+          />
+
+          {/* 3-Step WhatsApp Purchase Guide & Payment Info */}
+          <HowToBuySection settings={settings} />
+        </main>
+
+        {/* Footer */}
+        <Footer
           settings={settings}
+          onOpenInstallPrompt={() => setManualInstallTrigger(true)}
+        />
+
+        {/* Book Detailed Modal */}
+        {selectedBook && (
+          <BookDetailModal
+            book={selectedBook}
+            settings={settings}
+            bcvRates={bcvRates}
+            isWishlisted={wishlistIds.includes(selectedBook.id)}
+            onToggleWishlist={toggleWishlist}
+            onClose={() => setSelectedBook(null)}
+            isAdminLoggedIn={isAdminLoggedIn}
+            onEditInAdmin={(book) => {
+              setSelectedBook(null);
+              setStoreEditingBook(book);
+              setIsStoreEditModalOpen(true);
+            }}
+          />
+        )}
+
+        {/* Customer Wishlist Modal */}
+        <WishlistModal
+          isOpen={isWishlistOpen}
           wishlistIds={wishlistIds}
-          bcvRates={bcvRates}
-          catalogs={catalogs}
-          onToggleWishlist={toggleWishlist}
-          onSelectBook={(book) => setSelectedBook(book)}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          selectedGenre={selectedGenre}
-          onSelectGenre={setSelectedGenre}
-          isAdminLoggedIn={isAdminLoggedIn}
-          onEditBook={(book) => {
-            setDirectEditBook(book);
-            setIsAdminOpen(true);
-          }}
-        />
-
-        {/* 3-Step WhatsApp Purchase Guide & Payment Info */}
-        <HowToBuySection settings={settings} />
-      </main>
-
-      {/* Footer */}
-      <Footer
-        settings={settings}
-        onOpenInstallPrompt={() => setManualInstallTrigger(true)}
-      />
-
-      {/* Book Detailed Modal */}
-      {selectedBook && (
-        <BookDetailModal
-          book={selectedBook}
+          allBooks={books}
           settings={settings}
           bcvRates={bcvRates}
-          isWishlisted={wishlistIds.includes(selectedBook.id)}
-          onToggleWishlist={toggleWishlist}
-          onClose={() => setSelectedBook(null)}
-          isAdminLoggedIn={isAdminLoggedIn}
-          onEditInAdmin={(book) => {
-            setSelectedBook(null);
-            setDirectEditBook(book);
+          onClose={() => setIsWishlistOpen(false)}
+          onRemoveFromWishlist={toggleWishlist}
+          onSelectBook={(book) => setSelectedBook(book)}
+        />
+
+        {/* Direct In-Store Publication Quick Editor Modal */}
+        <PublicationEditorModal
+          isOpen={isStoreEditModalOpen}
+          bookToEdit={storeEditingBook}
+          currencySymbol={settings.currencySymbol}
+          bcvRates={bcvRates}
+          catalogs={catalogs}
+          onClose={() => {
+            setIsStoreEditModalOpen(false);
+            setStoreEditingBook(null);
+          }}
+          onSave={(bookData, existingId) => {
+            if (existingId) {
+              const existing = books.find((b) => b.id === existingId) || storeEditingBook;
+              const finalImages =
+                bookData.images && bookData.images.length > 0
+                  ? bookData.images
+                  : bookData.coverUrl
+                  ? [bookData.coverUrl]
+                  : existing?.images || [];
+              const finalCover = finalImages[0] || bookData.coverUrl || existing?.coverUrl || '';
+
+              const updated: Book = {
+                ...(existing || {}),
+                ...bookData,
+                id: existingId,
+                createdAt: existing?.createdAt || Date.now(),
+                coverUrl: finalCover,
+                images: finalImages.length > 0 ? finalImages : [finalCover],
+                price: Number(bookData.price) || 0,
+              };
+              updateBook(updated);
+              showStoreToast(`Publicación «${updated.title}» actualizada con éxito. Cambios visibles de inmediato para los clientes.`);
+            } else {
+              const created = addBook(bookData);
+              showStoreToast(`Nueva publicación «${created.title}» agregada y publicada con éxito.`);
+            }
+            setIsStoreEditModalOpen(false);
+            setStoreEditingBook(null);
+          }}
+          onOpenFullAdmin={() => {
+            setIsStoreEditModalOpen(false);
+            setDirectEditBook(storeEditingBook);
             setIsAdminOpen(true);
           }}
         />
-      )}
 
-      {/* Customer Wishlist Modal */}
-      <WishlistModal
-        isOpen={isWishlistOpen}
-        wishlistIds={wishlistIds}
-        allBooks={books}
-        settings={settings}
-        bcvRates={bcvRates}
-        onClose={() => setIsWishlistOpen(false)}
-        onRemoveFromWishlist={toggleWishlist}
-        onSelectBook={(book) => setSelectedBook(book)}
-      />
+        {/* Quick Floating WhatsApp Action Button on bottom-right for Customers */}
+        <a
+          href={floatingWhatsAppUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          id="floating-whatsapp-btn"
+          className="fixed right-6 bottom-6 z-30 bg-[#25D366] hover:bg-[#20ba5a] text-white p-3.5 sm:px-4 sm:py-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2.5 group transform hover:scale-105"
+          title="Consultar por WhatsApp"
+        >
+          <MessageCircle className="w-6 h-6 fill-white shrink-0" />
+          <span className="hidden sm:inline text-xs font-bold tracking-wide">
+            ¿Deseas consultar un libro?
+          </span>
+        </a>
 
-      {/* Quick Floating WhatsApp Action Button on bottom-right for Customers */}
-      <a
-        href={floatingWhatsAppUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        id="floating-whatsapp-btn"
-        className="fixed right-6 bottom-6 z-30 bg-[#25D366] hover:bg-[#20ba5a] text-white p-3.5 sm:px-4 sm:py-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2.5 group transform hover:scale-105"
-        title="Consultar por WhatsApp"
-      >
-        <MessageCircle className="w-6 h-6 fill-white shrink-0" />
-        <span className="hidden sm:inline text-xs font-bold tracking-wide">
-          ¿Deseas consultar un libro?
-        </span>
-      </a>
-      {/* Floating PWA Install Prompt Banner (Only when not installed, auto-dismiss in 14s or manually) */}
-      <PWAInstallPrompt
-        manualTrigger={manualInstallTrigger}
-        onManualTriggerHandled={() => setManualInstallTrigger(false)}
-      />
+        {/* Floating PWA Install Prompt Banner */}
+        <PWAInstallPrompt
+          manualTrigger={manualInstallTrigger}
+          onManualTriggerHandled={() => setManualInstallTrigger(false)}
+        />
       </div>
     </div>
   );

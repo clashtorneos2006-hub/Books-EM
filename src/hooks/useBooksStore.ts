@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Book, BookStatus, StoreSettings } from '../types';
 import { INITIAL_BOOKS, DEFAULT_STORE_SETTINGS } from '../data/initialData';
 import { BcvRates, getStoredBcvRates, syncBcvRates } from '../services/bcvRates';
@@ -33,34 +33,24 @@ export function useBooksStore() {
     };
   }, []);
 
+  // Initialize books from localStorage for immediate 0ms render
   const [books, setBooks] = useState<Book[]>(() => {
     try {
       const saved = localStorage.getItem(BOOKS_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Normalize existing books to have currency and sane dollar/euro prices if they had old large values
           return parsed.map((b: Book) => {
             const cur = b.currency || 'USD';
-            let p = b.price;
-            if (p > 1000 && cur !== 'VES') {
-              p = Math.round(p / 3500) || 15;
-            }
-            // Ensure images array exists and has at least coverUrl, and sync with initial data if available
             let imgs = Array.isArray(b.images) && b.images.length > 0 ? b.images.filter(Boolean) : [];
             if (imgs.length === 0 && b.coverUrl) {
               imgs = [b.coverUrl];
-            }
-            // Check if initial book has gallery images
-            const initialMatch = INITIAL_BOOKS.find(ib => ib.id === b.id);
-            if (imgs.length <= 1 && initialMatch?.images && initialMatch.images.length > 1) {
-              imgs = initialMatch.images;
             }
             const primaryCover = imgs[0] || b.coverUrl || '';
             return {
               ...b,
               currency: cur,
-              price: p,
+              price: Number(b.price) || 0,
               coverUrl: primaryCover,
               images: imgs.length > 0 ? imgs : [primaryCover],
             };
@@ -131,7 +121,7 @@ export function useBooksStore() {
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [isWishlistOpen, setIsWishlistOpen] = useState<boolean>(false);
 
-  // Sync to localStorage with resilience against QuotaExceededError
+  // Sync to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(books));
@@ -141,18 +131,14 @@ export function useBooksStore() {
         e instanceof DOMException &&
         (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
       if (isQuotaError) {
-        console.warn('Almacenamiento local lleno. Optimizando catálogo para conservar datos esenciales...');
         try {
-          // Keep essential fields and trim oversized data strings to preserve user inventory
           const lightweight = books.map((b) => ({
             ...b,
-            images: (b.images || []).map((img) =>
-              img.startsWith('data:image') && img.length > 150000 ? (b.coverUrl?.startsWith('http') ? b.coverUrl : '') : img
-            ).filter(Boolean),
+            images: (b.images || []).filter((img) => !img.startsWith('data:image') || img.length < 100000),
           }));
           localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(lightweight));
         } catch (innerErr) {
-          console.error('No se pudo guardar el catálogo optimizado:', innerErr);
+          console.error('No se pudo guardar catálogo optimizado:', innerErr);
         }
       }
     }
@@ -206,6 +192,91 @@ export function useBooksStore() {
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
 
+  // Server API Sync Functions
+  const isSyncingRef = useRef(false);
+
+  const fetchServerBooks = useCallback(async () => {
+    if (isSyncingRef.current) return;
+    try {
+      isSyncingRef.current = true;
+      const res = await fetch('/api/books');
+      if (res.ok) {
+        const serverBooks = await res.json();
+        if (Array.isArray(serverBooks) && serverBooks.length > 0) {
+          setBooks((prev) => {
+            // Check if there are changes to avoid needless re-render
+            const prevSerialized = JSON.stringify(prev);
+            const nextSerialized = JSON.stringify(serverBooks);
+            if (prevSerialized !== nextSerialized) {
+              return serverBooks;
+            }
+            return prev;
+          });
+        }
+      }
+    } catch {
+      // Server not reachable or standalone client; fallback gracefully
+    } finally {
+      isSyncingRef.current = false;
+    }
+  }, []);
+
+  const fetchServerSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (res.ok) {
+        const serverSettings = await res.json();
+        if (serverSettings && serverSettings.storeName) {
+          setSettings((prev) => ({ ...prev, ...serverSettings }));
+        }
+      }
+    } catch {
+      // Graceful fallback
+    }
+  }, []);
+
+  const fetchServerCatalogs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/catalogs');
+      if (res.ok) {
+        const serverCatalogs = await res.json();
+        if (Array.isArray(serverCatalogs) && serverCatalogs.length > 0) {
+          setCatalogs(serverCatalogs);
+        }
+      }
+    } catch {
+      // Graceful fallback
+    }
+  }, []);
+
+  // Initial fetch and continuous real-time sync for customers and admin
+  useEffect(() => {
+    fetchServerBooks();
+    fetchServerSettings();
+    fetchServerCatalogs();
+
+    // Poll every 5 seconds so any customer or admin tab receives instant updates
+    const interval = setInterval(() => {
+      fetchServerBooks();
+    }, 5000);
+
+    const onFocus = () => {
+      fetchServerBooks();
+      fetchServerSettings();
+      fetchServerCatalogs();
+    };
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('visibilitychange', onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [fetchServerBooks, fetchServerSettings, fetchServerCatalogs]);
+
+  // CRUD Methods with optimistic UI + persistent server sync
   const addBook = (newBookData: Omit<Book, 'id' | 'createdAt'>) => {
     const images = Array.isArray(newBookData.images) && newBookData.images.length > 0
       ? newBookData.images.filter(Boolean)
@@ -214,12 +285,25 @@ export function useBooksStore() {
 
     const newBook: Book = {
       ...newBookData,
-      id: `book-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      id: `book-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       createdAt: Date.now(),
       coverUrl,
       images: images.length > 0 ? images : [coverUrl],
+      price: Number(newBookData.price) || 0,
     };
-    setBooks(prev => [newBook, ...prev]);
+
+    // Optimistic UI update
+    setBooks((prev) => [newBook, ...prev]);
+
+    // Persistent server sync
+    fetch('/api/books', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newBook),
+    }).catch((err) => {
+      console.warn('Error syncing new book to server:', err);
+    });
+
     return newBook;
   };
 
@@ -233,36 +317,81 @@ export function useBooksStore() {
       ...updated,
       coverUrl,
       images: images.length > 0 ? images : [coverUrl],
+      price: Number(updated.price) || 0,
     };
 
-    setBooks(prev => prev.map(b => (b.id === sanitizedBook.id ? sanitizedBook : b)));
+    // Optimistic UI update
+    setBooks((prev) => prev.map((b) => (b.id === sanitizedBook.id ? sanitizedBook : b)));
     if (selectedBook?.id === sanitizedBook.id) {
       setSelectedBook(sanitizedBook);
     }
+
+    // Persistent server sync
+    fetch(`/api/books/${encodeURIComponent(sanitizedBook.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sanitizedBook),
+    }).catch((err) => {
+      console.warn('Error syncing book update to server:', err);
+    });
+
+    return sanitizedBook;
   };
 
   const deleteBook = (id: string) => {
-    setBooks(prev => prev.filter(b => b.id !== id));
-    setWishlistIds(prev => prev.filter(wId => wId !== id));
+    // Optimistic UI update
+    setBooks((prev) => prev.filter((b) => b.id !== id));
+    setWishlistIds((prev) => prev.filter((wId) => wId !== id));
     if (selectedBook?.id === id) {
       setSelectedBook(null);
     }
+
+    // Persistent server sync
+    fetch(`/api/books/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }).catch((err) => {
+      console.warn('Error syncing delete to server:', err);
+    });
   };
 
   const toggleFeatured = (id: string) => {
-    setBooks(prev =>
-      prev.map(b => (b.id === id ? { ...b, featured: !b.featured } : b))
+    setBooks((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, featured: !b.featured } : b))
     );
+
+    fetch(`/api/books/${encodeURIComponent(id)}/featured`, {
+      method: 'PATCH',
+    }).catch((err) => {
+      console.warn('Error syncing featured toggle to server:', err);
+    });
   };
 
   const updateBookStatus = (id: string, status: BookStatus) => {
-    setBooks(prev =>
-      prev.map(b => (b.id === id ? { ...b, status } : b))
+    setBooks((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, status } : b))
     );
+
+    fetch(`/api/books/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    }).catch((err) => {
+      console.warn('Error syncing status update to server:', err);
+    });
   };
 
   const updateSettings = (newFields: Partial<StoreSettings>) => {
-    setSettings(prev => ({ ...prev, ...newFields }));
+    setSettings((prev) => {
+      const merged = { ...prev, ...newFields };
+      fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(merged),
+      }).catch((err) => {
+        console.warn('Error syncing settings to server:', err);
+      });
+      return merged;
+    });
   };
 
   const resetToDefaults = () => {
@@ -274,6 +403,10 @@ export function useBooksStore() {
     localStorage.removeItem(SETTINGS_STORAGE_KEY);
     localStorage.removeItem(WISHLIST_STORAGE_KEY);
     localStorage.removeItem(CATALOGS_STORAGE_KEY);
+
+    fetch('/api/reset', { method: 'POST' }).catch((err) => {
+      console.warn('Error resetting on server:', err);
+    });
   };
 
   const addCatalog = (name: string): { success: boolean; error?: string } => {
@@ -284,7 +417,17 @@ export function useBooksStore() {
     if (catalogs.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
       return { success: false, error: 'Ya existe un catálogo con este nombre.' };
     }
-    setCatalogs((prev) => [...prev, trimmed]);
+    const updated = [...catalogs, trimmed];
+    setCatalogs(updated);
+
+    fetch('/api/catalogs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ catalogs: updated }),
+    }).catch((err) => {
+      console.warn('Error syncing catalogs to server:', err);
+    });
+
     return { success: true };
   };
 
@@ -304,16 +447,26 @@ export function useBooksStore() {
       return { success: false, error: 'Ya existe otro catálogo con este nombre.' };
     }
 
-    setCatalogs((prev) => prev.map((c) => (c === oldName ? trimmedNew : c)));
+    const updatedCatalogs = catalogs.map((c) => (c === oldName ? trimmedNew : c));
+    setCatalogs(updatedCatalogs);
+
+    fetch('/api/catalogs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ catalogs: updatedCatalogs }),
+    }).catch((err) => {
+      console.warn('Error syncing catalogs to server:', err);
+    });
 
     if (updateBooks) {
-      setBooks((prevBooks) =>
-        prevBooks.map((b) =>
+      setBooks((prevBooks) => {
+        const updated = prevBooks.map((b) =>
           b.genre?.trim().toLowerCase() === oldName.trim().toLowerCase()
             ? { ...b, genre: trimmedNew }
             : b
-        )
-      );
+        );
+        return updated;
+      });
     }
     return { success: true };
   };
@@ -322,7 +475,17 @@ export function useBooksStore() {
     nameToDelete: string,
     reassignTo?: string
   ): { success: boolean } => {
-    setCatalogs((prev) => prev.filter((c) => c !== nameToDelete));
+    const updated = catalogs.filter((c) => c !== nameToDelete);
+    setCatalogs(updated);
+
+    fetch('/api/catalogs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ catalogs: updated }),
+    }).catch((err) => {
+      console.warn('Error syncing catalogs to server:', err);
+    });
+
     if (reassignTo) {
       const target = reassignTo.trim();
       setBooks((prevBooks) =>
@@ -338,26 +501,48 @@ export function useBooksStore() {
 
   const reorderCatalogs = (newOrder: string[]) => {
     setCatalogs(newOrder);
+    fetch('/api/catalogs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ catalogs: newOrder }),
+    }).catch((err) => {
+      console.warn('Error syncing catalogs to server:', err);
+    });
   };
 
   const resetCatalogs = () => {
     setCatalogs(DEFAULT_CATALOGS);
-    try {
-      localStorage.setItem(CATALOGS_STORAGE_KEY, JSON.stringify(DEFAULT_CATALOGS));
-    } catch (e) {
-      console.warn('Error resetting catalogs:', e);
-    }
+    fetch('/api/catalogs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ catalogs: DEFAULT_CATALOGS }),
+    }).catch((err) => {
+      console.warn('Error syncing catalogs to server:', err);
+    });
   };
 
   const importCatalog = (importedBooks: Book[]) => {
     if (Array.isArray(importedBooks) && importedBooks.length > 0) {
       setBooks(importedBooks);
+      try {
+        localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(importedBooks));
+      } catch (e) {
+        console.warn('Error saving imported books to localStorage:', e);
+      }
+      // Sync each or bulk to server
+      importedBooks.forEach((book) => {
+        fetch(`/api/books/${encodeURIComponent(book.id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(book),
+        }).catch(() => {});
+      });
     }
   };
 
   const toggleWishlist = (bookId: string) => {
-    setWishlistIds(prev =>
-      prev.includes(bookId) ? prev.filter(id => id !== bookId) : [...prev, bookId]
+    setWishlistIds((prev) =>
+      prev.includes(bookId) ? prev.filter((id) => id !== bookId) : [...prev, bookId]
     );
   };
 

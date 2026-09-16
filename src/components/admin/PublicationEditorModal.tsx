@@ -12,17 +12,28 @@ import {
   Image as ImageIcon,
   ChevronDown,
   ChevronUp,
+  TrendingUp,
+  Trash2,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  Images,
+  Link as LinkIcon,
+  ExternalLink,
 } from 'lucide-react';
-import { Book, BookStatus } from '../../types';
-import { PRESET_COVER_SUGGESTIONS } from '../../data/initialData';
-import { formatPrice, getStatusDetails } from '../../utils/helpers';
+import { Book, BookStatus, CurrencyCode } from '../../types';
+import { formatPrice, getStatusDetails, compressImageFile, FALLBACK_BOOK_COVER } from '../../utils/helpers';
+import { BcvRates, calculateBcvBreakdown, getCurrencySymbol } from '../../services/bcvRates';
 
 interface PublicationEditorModalProps {
   isOpen: boolean;
   bookToEdit: Book | null;
-  currencySymbol: string;
+  currencySymbol?: string;
+  bcvRates?: BcvRates;
+  catalogs?: string[];
   onClose: () => void;
   onSave: (bookData: Omit<Book, 'id' | 'createdAt'>, existingId?: string) => void;
+  onOpenFullAdmin?: () => void;
 }
 
 const COMMON_GENRES = [
@@ -42,52 +53,76 @@ const COMMON_GENRES = [
 export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
   isOpen,
   bookToEdit,
-  currencySymbol,
+  currencySymbol = '$',
+  bcvRates,
+  catalogs = COMMON_GENRES,
   onClose,
   onSave,
+  onOpenFullAdmin,
 }) => {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [genre, setGenre] = useState('');
-  const [price, setPrice] = useState<number>(45000);
+  const [currency, setCurrency] = useState<CurrencyCode>('USD');
+  const [price, setPrice] = useState<number>(15);
   const [status, setStatus] = useState<BookStatus>('disponible');
   const [featured, setFeatured] = useState(false);
-  const [coverUrl, setCoverUrl] = useState('');
+  const [images, setImages] = useState<string[]>([]);
   const [synopsis, setSynopsis] = useState('');
   const [editorial, setEditorial] = useState('');
   const [pages, setPages] = useState<number | ''>('');
   const [publishedYear, setPublishedYear] = useState<number | ''>('');
   const [isbn, setIsbn] = useState('');
 
+  const [newImageUrl, setNewImageUrl] = useState('');
+  const [showUrlInput, setShowUrlInput] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showPresetCovers, setShowPresetCovers] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [activePreviewIndex, setActivePreviewIndex] = useState(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Available catalog list
+  const availableGenres = Array.from(
+    new Set([...(catalogs || []), ...COMMON_GENRES].filter(Boolean))
+  );
+
   useEffect(() => {
+    if (!isOpen) return;
+
     if (bookToEdit) {
-      setTitle(bookToEdit.title);
-      setAuthor(bookToEdit.author);
-      setGenre(bookToEdit.genre);
-      setPrice(bookToEdit.price);
-      setStatus(bookToEdit.status);
-      setFeatured(bookToEdit.featured);
-      setCoverUrl(bookToEdit.coverUrl);
-      setSynopsis(bookToEdit.synopsis);
+      setTitle(bookToEdit.title || '');
+      setAuthor(bookToEdit.author || '');
+      setGenre(bookToEdit.genre || 'Novela');
+      setCurrency(bookToEdit.currency || 'USD');
+      setPrice(Number(bookToEdit.price) || 0);
+      setStatus(bookToEdit.status || 'disponible');
+      setFeatured(Boolean(bookToEdit.featured));
+
+      const initialImgs =
+        Array.isArray(bookToEdit.images) && bookToEdit.images.length > 0
+          ? bookToEdit.images.filter(Boolean)
+          : bookToEdit.coverUrl
+          ? [bookToEdit.coverUrl]
+          : [];
+      setImages(initialImgs);
+
+      setSynopsis(bookToEdit.synopsis || '');
       setEditorial(bookToEdit.editorial || '');
       setPages(bookToEdit.pages || '');
       setPublishedYear(bookToEdit.publishedYear || '');
       setIsbn(bookToEdit.isbn || '');
       setShowAdvanced(Boolean(bookToEdit.editorial || bookToEdit.pages || bookToEdit.isbn));
     } else {
-      // New publication defaults
       setTitle('');
       setAuthor('');
-      setGenre('Novela');
-      setPrice(45000);
+      setGenre(availableGenres[0] || 'Novela');
+      setCurrency('USD');
+      setPrice(15);
       setStatus('disponible');
       setFeatured(false);
-      setCoverUrl(PRESET_COVER_SUGGESTIONS[0].url);
+      setImages([]);
       setSynopsis('');
       setEditorial('');
       setPages('');
@@ -96,60 +131,124 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
       setShowAdvanced(false);
     }
     setErrorMessage('');
-    setShowPresetCovers(false);
+    setActivePreviewIndex(0);
+    setShowUrlInput(false);
+    setNewImageUrl('');
   }, [bookToEdit, isOpen]);
 
   if (!isOpen) return null;
 
-  // Handle local image file upload via FileReader
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Handle local file uploads with compression
+  const handleFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
 
-    if (!file.type.startsWith('image/')) {
-      setErrorMessage('Por favor selecciona un archivo de imagen válido (JPG, PNG, WebP).');
-      return;
-    }
-
-    if (file.size > 3.5 * 1024 * 1024) {
-      setErrorMessage('La imagen es demasiado pesada. Elige una de menos de 3.5MB.');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setCoverUrl(reader.result);
-        setErrorMessage('');
+    const validFiles: File[] = [];
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      if (!file.type.startsWith('image/')) {
+        setErrorMessage('Uno o más archivos seleccionados no son imágenes válidas.');
+        continue;
       }
-    };
-    reader.readAsDataURL(file);
+      validFiles.push(file);
+    }
+
+    if (validFiles.length === 0) return;
+
+    setIsCompressing(true);
+    setErrorMessage('');
+
+    try {
+      const compressedResults = await Promise.all(
+        validFiles.map((file) => compressImageFile(file, 1080, 1440, 0.82))
+      );
+      setImages((prev) => [...prev, ...compressedResults]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (err) {
+      console.error('Error comprimiendo imágenes:', err);
+      setErrorMessage('Hubo un error al procesar las imágenes. Intenta con imágenes más pequeñas.');
+    } finally {
+      setIsCompressing(false);
+    }
   };
 
-  // Quick price adjustment helper
-  const adjustPrice = (delta: number) => {
-    setPrice((prev) => Math.max(0, (Number(prev) || 0) + delta));
+  const handleAddImageUrl = () => {
+    const trimmed = newImageUrl.trim();
+    if (!trimmed) return;
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      setErrorMessage('La URL debe comenzar con http:// o https://');
+      return;
+    }
+    setImages((prev) => [...prev, trimmed]);
+    setNewImageUrl('');
+    setShowUrlInput(false);
+    setErrorMessage('');
   };
+
+  const removeImage = (index: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== index));
+    if (activePreviewIndex >= images.length - 1) {
+      setActivePreviewIndex(0);
+    }
+  };
+
+  const moveImage = (index: number, direction: 'left' | 'right') => {
+    const target = direction === 'left' ? index - 1 : index + 1;
+    if (target < 0 || target >= images.length) return;
+    setImages((prev) => {
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[target];
+      copy[target] = temp;
+      return copy;
+    });
+  };
+
+  const adjustPrice = (delta: number) => {
+    setPrice((prev) => {
+      const current = Number(prev) || 0;
+      const updated = Math.max(0, current + delta);
+      return currency === 'VES' ? Math.round(updated) : Number(updated.toFixed(2));
+    });
+  };
+
+  const bcvBreakdown = bcvRates ? calculateBcvBreakdown(price, currency, bcvRates) : null;
+  const currentSymbol = getCurrencySymbol(currency);
+  const statusInfo = getStatusDetails(status);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !author.trim() || !genre.trim() || price <= 0 || !synopsis.trim()) {
-      setErrorMessage('Completa los campos obligatorios: título, autor, género, precio válido y sinopsis.');
+    if (!title.trim()) {
+      setErrorMessage('El título de la publicación es obligatorio.');
+      return;
+    }
+    if (!author.trim()) {
+      setErrorMessage('El autor es obligatorio.');
+      return;
+    }
+    if (price <= 0) {
+      setErrorMessage('Por favor especifica un precio válido mayor a 0.');
       return;
     }
 
-    const finalCover = coverUrl.trim() || PRESET_COVER_SUGGESTIONS[0].url;
+    const finalImages = images.length > 0 ? images : [FALLBACK_BOOK_COVER];
+    const finalCover = finalImages[0];
+    const finalSynopsis = synopsis.trim() || `Publicación literaria de ${title.trim()}, escrita por ${author.trim()}. Consulta disponibilidad y entregas directas por WhatsApp.`;
 
     onSave(
       {
         title: title.trim(),
         author: author.trim(),
-        genre: genre.trim(),
+        genre: genre.trim() || 'Novela',
         price: Number(price),
+        currency,
         status,
         featured,
         coverUrl: finalCover,
-        synopsis: synopsis.trim(),
+        images: finalImages,
+        synopsis: finalSynopsis,
         editorial: editorial.trim() || undefined,
         pages: pages ? Number(pages) : undefined,
         publishedYear: publishedYear ? Number(publishedYear) : undefined,
@@ -157,418 +256,503 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
       },
       bookToEdit?.id
     );
-    onClose();
   };
-
-  const statusInfo = getStatusDetails(status);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto"
+      id="publication-editor-modal-overlay"
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto animate-in fade-in duration-200"
       onClick={onClose}
     >
       <div
-        className="relative bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-y-auto border border-[#E8DFD0] shadow-2xl p-5 sm:p-8 my-auto"
+        id="publication-editor-modal-container"
+        className="bg-white rounded-3xl border border-[#E8DFD0] shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden text-[#2C2420] my-auto"
         onClick={(e) => e.stopPropagation()}
-        id="publication-editor-modal"
       >
-        {/* Modal Top Bar */}
-        <div className="flex items-center justify-between pb-4 mb-6 border-b border-[#EFE8DF]">
+        {/* Header */}
+        <div className="px-5 sm:px-8 py-4 sm:py-5 border-b border-[#EFE8DF] flex items-center justify-between gap-3 bg-[#FAF7F2] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#F4EFEB] text-[#5C3218] flex items-center justify-center">
-              <BookOpen className="w-5 h-5 stroke-[2]" />
+            <div className="w-10 h-10 rounded-2xl bg-[#5C3218] text-[#FAF7F2] flex items-center justify-center shadow-xs">
+              <BookOpen className="w-5 h-5 stroke-[2.2]" />
             </div>
             <div>
-              <h2 className="font-brand text-xl sm:text-2xl font-bold text-[#3B2213]">
-                {bookToEdit ? 'Modificar Publicación' : 'Crear Nueva Publicación'}
-              </h2>
-              <p className="text-xs text-[#735F52]">
-                Ajusta los detalles visuales, precio y disponibilidad de manera cómoda
+              <div className="flex items-center gap-2">
+                <h2 className="font-serif-title text-lg sm:text-xl font-bold text-[#3B2213]">
+                  {bookToEdit ? 'Editar Publicación' : 'Nueva Publicación'}
+                </h2>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  Visible para Clientes
+                </span>
+              </div>
+              <p className="text-xs text-[#7A6455] mt-0.5">
+                {bookToEdit
+                  ? `Modifica los datos de «${bookToEdit.title}». Cada cambio se reflejará de inmediato en la tienda.`
+                  : 'Completa la información para publicar un nuevo libro en el catálogo en vivo.'}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 text-[#8C7464] hover:text-[#3B2213] rounded-full hover:bg-[#FAF7F2] transition-colors"
-            title="Cerrar editor"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenFullAdmin && (
+              <button
+                type="button"
+                onClick={onOpenFullAdmin}
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#5C3218] hover:bg-[#EFE8DF] rounded-xl transition-colors cursor-pointer"
+                title="Abrir panel de administración completo"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Panel Completo</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl text-[#7A6455] hover:text-[#3B2213] hover:bg-[#EFE8DF] transition-colors cursor-pointer"
+              title="Cerrar ventana"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {errorMessage && (
-          <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage}</span>
+        {/* Scrollable Form Body */}
+        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 p-5 sm:p-8 space-y-6">
+          {/* Error Message */}
+          {errorMessage && (
+            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in duration-150">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* Core Information Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+            {/* Title */}
+            <div>
+              <label className="block text-xs font-bold text-[#5C3218] mb-1.5">
+                Título del Libro / Obra <span className="text-rose-600">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Ej. Cien Años de Soledad"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-sm font-medium focus:bg-white focus:border-[#8C5E3C] focus:ring-2 focus:ring-[#8C5E3C]/20 transition-all outline-hidden"
+              />
+            </div>
+
+            {/* Author */}
+            <div>
+              <label className="block text-xs font-bold text-[#5C3218] mb-1.5">
+                Autor(a) <span className="text-rose-600">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={author}
+                onChange={(e) => setAuthor(e.target.value)}
+                placeholder="Ej. Gabriel García Márquez"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-sm font-medium focus:bg-white focus:border-[#8C5E3C] focus:ring-2 focus:ring-[#8C5E3C]/20 transition-all outline-hidden"
+              />
+            </div>
           </div>
-        )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Main Grid: Left preview / Right inputs */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Preview Column: Exact appearance of the publication */}
-            <div className="lg:col-span-4 bg-[#FAF7F2] p-4 rounded-2xl border border-[#EAE1D4] space-y-3">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#735F52] block flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5 text-[#8C5E3C]" />
-                Vista Previa de la Publicación
-              </span>
-
-              {/* Publication Card Preview */}
-              <div className="bg-white rounded-xl border border-[#E8DFD0] overflow-hidden shadow-xs">
-                <div className="aspect-[2/3] w-full bg-[#EFE8DF] overflow-hidden relative">
-                  <img
-                    src={coverUrl || PRESET_COVER_SUGGESTIONS[0].url}
-                    alt="Vista previa de portada"
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = PRESET_COVER_SUGGESTIONS[0].url;
-                    }}
-                  />
-                  {featured && (
-                    <div className="absolute top-2 left-2 bg-amber-400 text-amber-950 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 shadow-xs">
-                      <Star className="w-3 h-3 fill-amber-950" />
-                      <span>Destacado</span>
-                    </div>
-                  )}
-                  <div className="absolute bottom-2 right-2">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded shadow-xs ${statusInfo.badgeBg}`}>
-                      {statusInfo.label}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="p-3">
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#8C5E3C] block">
-                    {genre || 'Género'}
-                  </span>
-                  <h4 className="font-serif-title text-sm font-bold text-[#2D241E] line-clamp-1 mt-0.5">
-                    {title || 'Título del libro'}
-                  </h4>
-                  <p className="text-[11px] text-[#735F52] line-clamp-1">
-                    {author || 'Nombre del autor'}
-                  </p>
-                  <p className="text-xs font-bold text-[#5C3218] mt-2">
-                    {formatPrice(price, currencySymbol)}
-                  </p>
-                </div>
+          {/* Pricing, Currency & Rates */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#FAF7F2] border border-[#E8DFC8] space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-[#E8DFC8] pb-3">
+              <div>
+                <span className="text-xs font-bold text-[#5C3218] uppercase tracking-wider">
+                  Fijación de Precio y Moneda
+                </span>
+                <p className="text-[11px] text-[#7A6455] mt-0.5">
+                  Los clientes verán este precio en su moneda y convertido automáticamente a tasa oficial BCV.
+                </p>
               </div>
 
-              {/* Cover options - Solo subida de fotos */}
-              <div className="space-y-2 pt-2 border-t border-[#EAE1D4]">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-[#5C3218]">Foto de Portada</span>
-                  <span className="text-[11px] text-[#8C7464]">Sube la foto del libro</span>
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-3 bg-[#FAF7F2] hover:bg-[#F2ECE4] border-2 border-dashed border-[#CBB8A6] hover:border-[#8C5E3C] rounded-xl text-xs font-bold text-[#5C3218] transition-colors cursor-pointer shadow-2xs"
-                >
-                  <Upload className="w-4 h-4 text-[#8C5E3C]" />
-                  <span>Subir foto desde este dispositivo</span>
-                </button>
+              {/* Currency Selector */}
+              <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-[#DED4C7] shadow-2xs">
+                {(['USD', 'EUR', 'VES'] as CurrencyCode[]).map((cur) => (
+                  <button
+                    key={cur}
+                    type="button"
+                    onClick={() => setCurrency(cur)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      currency === cur
+                        ? 'bg-[#5C3218] text-white shadow-xs'
+                        : 'text-[#6E5A4E] hover:bg-[#FAF7F2]'
+                    }`}
+                  >
+                    {cur === 'USD' ? '$ USD' : cur === 'EUR' ? '€ EUR' : 'Bs. VES'}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Right Editing Form Column */}
-            <div className="lg:col-span-8 space-y-4">
-              {/* Row 1: Title & Author */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#5C3218] mb-1">
-                    Título de la Publicación *
-                  </label>
-                  <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="ej. Cien Años de Soledad"
-                    className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#E5DACB] rounded-xl text-sm text-[#2D241E] focus:outline-none focus:border-[#8C5E3C] focus:bg-white"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#5C3218] mb-1">
-                    Autor *
-                  </label>
-                  <input
-                    type="text"
-                    value={author}
-                    onChange={(e) => setAuthor(e.target.value)}
-                    placeholder="ej. Gabriel García Márquez"
-                    className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#E5DACB] rounded-xl text-sm text-[#2D241E] focus:outline-none focus:border-[#8C5E3C] focus:bg-white"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Row 2: Price with Quick Steppers */}
-              <div className="p-3.5 bg-[#FAF7F2] rounded-2xl border border-[#EAE1D4]">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[#5C3218]">
-                    Precio de Venta *
-                  </label>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-[#8C7464] font-medium">Ajuste rápido:</span>
-                    <button
-                      type="button"
-                      onClick={() => adjustPrice(-5000)}
-                      className="px-2 py-0.5 bg-white hover:bg-[#EFE8DF] border border-[#E8DFC8] rounded text-[11px] text-[#5C3218] font-bold"
-                    >
-                      -$5.000
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => adjustPrice(1000)}
-                      className="px-2 py-0.5 bg-white hover:bg-[#EFE8DF] border border-[#E8DFC8] rounded text-[11px] text-[#5C3218] font-bold"
-                    >
-                      +$1.000
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => adjustPrice(5000)}
-                      className="px-2 py-0.5 bg-white hover:bg-[#EFE8DF] border border-[#E8DFC8] rounded text-[11px] text-[#5C3218] font-bold"
-                    >
-                      +$5.000
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => adjustPrice(10000)}
-                      className="px-2 py-0.5 bg-white hover:bg-[#EFE8DF] border border-[#E8DFC8] rounded text-[11px] text-[#5C3218] font-bold"
-                    >
-                      +$10.000
-                    </button>
-                  </div>
-                </div>
-
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-sm text-[#8C5E3C]">
-                    {currencySymbol}
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="500"
-                    value={price}
-                    onChange={(e) => setPrice(Number(e.target.value) || 0)}
-                    className="w-full pl-8 pr-4 py-2 bg-white border border-[#E5DACB] rounded-xl text-base font-bold text-[#3B2213] focus:outline-none focus:border-[#8C5E3C]"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Row 3: Availability Status with 3 tactile buttons & Featured toggle */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#5C3218]">
-                  Disponibilidad y Estado *
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+              {/* Price Input and adjustments */}
+              <div>
+                <label className="block text-xs font-bold text-[#5C3218] mb-1.5">
+                  Precio ({currentSymbol}) <span className="text-rose-600">*</span>
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setStatus('disponible')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      status === 'disponible'
-                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
-                        : 'bg-white hover:bg-emerald-50 text-emerald-800 border-[#E5DACB]'
-                    }`}
-                  >
-                    <span>🟢</span>
-                    <span>Disponible</span>
-                  </button>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-[#8C5E3C]">
+                      {currentSymbol}
+                    </span>
+                    <input
+                      type="number"
+                      step={currency === 'VES' ? '1' : '0.5'}
+                      min="0"
+                      required
+                      value={price}
+                      onChange={(e) => setPrice(Math.max(0, Number(e.target.value)))}
+                      className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-[#DED4C7] bg-white text-base font-bold text-[#3B2213] focus:border-[#8C5E3C] focus:ring-2 focus:ring-[#8C5E3C]/20 transition-all outline-hidden"
+                    />
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setStatus('bajo_pedido')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      status === 'bajo_pedido'
-                        ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
-                        : 'bg-white hover:bg-amber-50 text-amber-800 border-[#E5DACB]'
-                    }`}
-                  >
-                    <span>🟡</span>
-                    <span>Bajo Pedido</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setStatus('agotado')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      status === 'agotado'
-                        ? 'bg-stone-600 text-white border-stone-700 shadow-xs'
-                        : 'bg-white hover:bg-stone-100 text-stone-700 border-[#E5DACB]'
-                    }`}
-                  >
-                    <span>⚪</span>
-                    <span>Agotado</span>
-                  </button>
+                  {/* Quick price adjusters */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => adjustPrice(-1)}
+                      className="px-2.5 py-2 rounded-xl bg-white hover:bg-[#F4EFEB] border border-[#DED4C7] text-xs font-bold text-[#6E5A4E] cursor-pointer"
+                      title="Restar 1"
+                    >
+                      -1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustPrice(1)}
+                      className="px-2.5 py-2 rounded-xl bg-white hover:bg-[#F4EFEB] border border-[#DED4C7] text-xs font-bold text-[#6E5A4E] cursor-pointer"
+                      title="Sumar 1"
+                    >
+                      +1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adjustPrice(5)}
+                      className="px-2.5 py-2 rounded-xl bg-white hover:bg-[#F4EFEB] border border-[#DED4C7] text-xs font-bold text-[#6E5A4E] cursor-pointer"
+                      title="Sumar 5"
+                    >
+                      +5
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Featured toggle banner */}
-              <div className="flex items-center justify-between p-3 rounded-xl bg-amber-50/70 border border-amber-200">
-                <div className="flex items-center gap-2">
-                  <Star className={`w-4 h-4 ${featured ? 'fill-amber-500 text-amber-600' : 'text-amber-400'}`} />
-                  <div>
-                    <span className="text-xs font-bold text-amber-950 block">
-                      Destacar esta publicación
+              {/* BCV Breakdown Preview Box */}
+              {bcvBreakdown && (
+                <div className="p-3.5 rounded-xl bg-white border border-[#E2D7C8] shadow-2xs text-xs space-y-1">
+                  <div className="flex items-center justify-between text-[#6E5A4E]">
+                    <span className="flex items-center gap-1 font-semibold">
+                      <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                      Conversión Tasa BCV:
                     </span>
-                    <span className="text-[11px] text-amber-800">
-                      Aparecerá en los primeros lugares del catálogo de la tienda
-                    </span>
+                    <span className="font-bold text-[#3B2213]">{bcvBreakdown.originalFormatted}</span>
                   </div>
+                  <div className="flex items-center justify-between text-[11px] text-[#8C5E3C] font-semibold">
+                    <span>Equivalente en Bolívares:</span>
+                    <span className="text-emerald-700 font-bold">{bcvBreakdown.bolivaresFormatted}</span>
+                  </div>
+                  {currency !== 'USD' && (
+                    <div className="flex items-center justify-between text-[10px] text-[#A68F80]">
+                      <span>Equivalente en Dólares:</span>
+                      <span>{bcvBreakdown.usdFormatted}</span>
+                    </div>
+                  )}
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* Genre & Catalog Category + Availability Status */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {/* Genre */}
+            <div>
+              <label className="block text-xs font-bold text-[#5C3218] mb-1.5">
+                Género / Catálogo
+              </label>
+              <select
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-sm font-medium focus:bg-white focus:border-[#8C5E3C] outline-hidden cursor-pointer"
+              >
+                {availableGenres.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status */}
+            <div>
+              <label className="block text-xs font-bold text-[#5C3218] mb-1.5">
+                Estado de Disponibilidad
+              </label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as BookStatus)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-sm font-medium focus:bg-white focus:border-[#8C5E3C] outline-hidden cursor-pointer"
+              >
+                <option value="disponible">🟢 Disponible para Entrega</option>
+                <option value="bajo_pedido">🟡 Disponible Bajo Pedido</option>
+                <option value="agotado">🔴 Agotado</option>
+              </select>
+            </div>
+
+            {/* Featured Checkbox */}
+            <div className="flex items-center sm:pt-6">
+              <label className="flex items-center gap-2.5 cursor-pointer p-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] hover:bg-white transition-colors w-full">
                 <input
                   type="checkbox"
                   checked={featured}
                   onChange={(e) => setFeatured(e.target.checked)}
-                  className="w-5 h-5 rounded text-[#5C3218] focus:ring-[#5C3218] border-amber-300 cursor-pointer"
+                  className="w-4 h-4 rounded text-[#5C3218] focus:ring-[#8C5E3C] cursor-pointer"
                 />
-              </div>
-
-              {/* Genre Chips */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#5C3218] mb-1">
-                  Género Literario *
-                </label>
-                <input
-                  type="text"
-                  value={genre}
-                  onChange={(e) => setGenre(e.target.value)}
-                  placeholder="ej. Novela, Romance, Ensayo..."
-                  className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#E5DACB] rounded-xl text-sm text-[#2D241E] focus:outline-none focus:border-[#8C5E3C] focus:bg-white mb-2"
-                  required
-                />
-                <div className="flex flex-wrap gap-1">
-                  {COMMON_GENRES.map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => setGenre(g)}
-                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
-                        genre === g
-                          ? 'bg-[#5C3218] text-white border-[#5C3218]'
-                          : 'bg-[#FAF7F2] hover:bg-[#EFE8DF] border-[#E8DFC8] text-[#6E5A4E]'
-                      }`}
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Synopsis */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#5C3218] mb-1">
-                  Sinopsis / Reseña *
-                </label>
-                <textarea
-                  rows={4}
-                  value={synopsis}
-                  onChange={(e) => setSynopsis(e.target.value)}
-                  placeholder="Describe de qué trata la obra para atraer al lector..."
-                  className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#E5DACB] rounded-xl text-xs sm:text-sm text-[#2D241E] focus:outline-none focus:border-[#8C5E3C] focus:bg-white leading-relaxed"
-                  required
-                />
-              </div>
-
-              {/* Collapsible Advanced Info (Editorial, ISBN, Páginas, Año) */}
-              <div className="border-t border-[#F0E8DD] pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-[#8C5E3C] hover:text-[#5C3218]"
-                >
-                  <span>{showAdvanced ? 'Ocultar datos editoriales adicionales' : '+ Agregar datos editoriales (ISBN, páginas, editorial)'}</span>
-                  {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-
-                {showAdvanced && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 p-3 bg-[#FAF7F2] rounded-xl border border-[#EAE1D4] animate-in fade-in">
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[#735F52] mb-1">
-                        Editorial
-                      </label>
-                      <input
-                        type="text"
-                        value={editorial}
-                        onChange={(e) => setEditorial(e.target.value)}
-                        placeholder="ej. Planeta, Alfaguara..."
-                        className="w-full px-2.5 py-1.5 bg-white border border-[#E5DACB] rounded-lg text-xs"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[#735F52] mb-1">
-                        ISBN
-                      </label>
-                      <input
-                        type="text"
-                        value={isbn}
-                        onChange={(e) => setIsbn(e.target.value)}
-                        placeholder="ej. 978-84-..."
-                        className="w-full px-2.5 py-1.5 bg-white border border-[#E5DACB] rounded-lg text-xs"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[#735F52] mb-1">
-                        Páginas
-                      </label>
-                      <input
-                        type="number"
-                        value={pages}
-                        onChange={(e) => setPages(e.target.value === '' ? '' : Number(e.target.value))}
-                        placeholder="ej. 430"
-                        className="w-full px-2.5 py-1.5 bg-white border border-[#E5DACB] rounded-lg text-xs"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[#735F52] mb-1">
-                        Año de Publicación
-                      </label>
-                      <input
-                        type="number"
-                        value={publishedYear}
-                        onChange={(e) => setPublishedYear(e.target.value === '' ? '' : Number(e.target.value))}
-                        placeholder="ej. 2021"
-                        className="w-full px-2.5 py-1.5 bg-white border border-[#E5DACB] rounded-lg text-xs"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+                <span className="flex items-center gap-1.5 text-xs font-bold text-[#3B2213]">
+                  <Star className={`w-3.5 h-3.5 ${featured ? 'fill-amber-400 text-amber-500' : 'text-stone-400'}`} />
+                  Destacar en portada
+                </span>
+              </label>
             </div>
           </div>
 
-          {/* Modal Action Buttons */}
-          <div className="pt-4 border-t border-[#EFE8DF] flex items-center justify-end gap-3">
+          {/* Photo Gallery (Portada y fotos adicionales del libro) */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#FAF7F2] border border-[#E8DFC8] space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-[#E8DFC8] pb-3">
+              <div>
+                <span className="text-xs font-bold text-[#5C3218] uppercase tracking-wider flex items-center gap-1.5">
+                  <Images className="w-4 h-4 text-[#8C5E3C]" />
+                  Fotos del Libro ({images.length})
+                </span>
+                <p className="text-[11px] text-[#7A6455] mt-0.5">
+                  La primera imagen es la portada principal. Puedes subir fotos desde tu dispositivo o añadir enlaces.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFilesUpload}
+                  multiple
+                  accept="image/*"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isCompressing}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#5C3218] hover:bg-[#472611] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{isCompressing ? 'Procesando...' : 'Subir Fotos'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUrlInput(!showUrlInput)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-[#FAF7F2] border border-[#DED4C7] text-xs font-bold text-[#6E5A4E] cursor-pointer"
+                >
+                  <LinkIcon className="w-3.5 h-3.5" />
+                  <span>Añadir Enlace</span>
+                </button>
+              </div>
+            </div>
+
+            {/* URL input field */}
+            {showUrlInput && (
+              <div className="flex items-center gap-2 p-2 bg-white rounded-xl border border-[#DED4C7]">
+                <input
+                  type="url"
+                  value={newImageUrl}
+                  onChange={(e) => setNewImageUrl(e.target.value)}
+                  placeholder="https://ejemplo.com/portada-libro.jpg"
+                  className="flex-1 px-2.5 py-1.5 text-xs text-[#2C2420] outline-hidden"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddImageUrl();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleAddImageUrl}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold cursor-pointer"
+                >
+                  Agregar
+                </button>
+              </div>
+            )}
+
+            {/* Gallery Thumbnails List */}
+            {images.length > 0 ? (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {images.map((imgUrl, idx) => (
+                  <div
+                    key={idx}
+                    className={`group relative rounded-xl overflow-hidden border-2 aspect-3/4 bg-stone-100 shadow-xs ${
+                      idx === 0 ? 'border-amber-500 ring-2 ring-amber-400/30' : 'border-stone-200'
+                    }`}
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`Foto ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                    {idx === 0 && (
+                      <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-amber-500 text-white text-[9px] font-bold shadow-xs">
+                        Portada
+                      </span>
+                    )}
+
+                    {/* Actions on hover */}
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1.5">
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => removeImage(idx)}
+                          className="p-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+                          title="Eliminar foto"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between gap-1">
+                        {idx > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => moveImage(idx, 'left')}
+                            className="p-1 rounded-md bg-white/80 hover:bg-white text-black cursor-pointer text-[10px]"
+                            title="Mover a la izquierda (hacer portada)"
+                          >
+                            <ChevronLeft className="w-3 h-3" />
+                          </button>
+                        )}
+                        {idx < images.length - 1 && (
+                          <button
+                            type="button"
+                            onClick={() => moveImage(idx, 'right')}
+                            className="p-1 rounded-md bg-white/80 hover:bg-white text-black cursor-pointer text-[10px] ml-auto"
+                            title="Mover a la derecha"
+                          >
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center rounded-xl border-2 border-dashed border-[#DED4C7] bg-white">
+                <ImageIcon className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-[#7A6455]">
+                  No hay fotos cargadas aún para esta publicación.
+                </p>
+                <p className="text-[11px] text-stone-400 mt-0.5">
+                  Haz clic en «Subir Fotos» para seleccionar imágenes desde tu equipo.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Synopsis */}
+          <div>
+            <label className="block text-xs font-bold text-[#5C3218] mb-1.5">
+              Sinopsis / Reseña Literaria
+            </label>
+            <textarea
+              rows={4}
+              value={synopsis}
+              onChange={(e) => setSynopsis(e.target.value)}
+              placeholder="Escribe una breve descripción atractiva del libro para que los clientes conozcan la historia..."
+              className="w-full px-3.5 py-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-sm font-medium focus:bg-white focus:border-[#8C5E3C] focus:ring-2 focus:ring-[#8C5E3C]/20 transition-all outline-hidden resize-y"
+            />
+          </div>
+
+          {/* Collapsible Advanced Details */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex items-center gap-2 text-xs font-bold text-[#5C3218] hover:text-[#3B2213] cursor-pointer"
+            >
+              {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              <span>Detalles Adicionales (Editorial, Páginas, Año, ISBN)</span>
+            </button>
+
+            {showAdvanced && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-3 pt-3 border-t border-[#EFE8DF] animate-in fade-in duration-150">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#6E5A4E] mb-1">Editorial</label>
+                  <input
+                    type="text"
+                    value={editorial}
+                    onChange={(e) => setEditorial(e.target.value)}
+                    placeholder="Ej. Planeta / Alfaguara"
+                    className="w-full px-3 py-2 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-xs focus:bg-white outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#6E5A4E] mb-1">Nº Páginas</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={pages}
+                    onChange={(e) => setPages(e.target.value ? Number(e.target.value) : '')}
+                    placeholder="Ej. 340"
+                    className="w-full px-3 py-2 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-xs focus:bg-white outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#6E5A4E] mb-1">Año de Publicación</label>
+                  <input
+                    type="number"
+                    min="1800"
+                    max={new Date().getFullYear() + 1}
+                    value={publishedYear}
+                    onChange={(e) => setPublishedYear(e.target.value ? Number(e.target.value) : '')}
+                    placeholder="Ej. 2023"
+                    className="w-full px-3 py-2 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-xs focus:bg-white outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#6E5A4E] mb-1">ISBN / Código</label>
+                  <input
+                    type="text"
+                    value={isbn}
+                    onChange={(e) => setIsbn(e.target.value)}
+                    placeholder="Ej. 978-0307474728"
+                    className="w-full px-3 py-2 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] text-xs focus:bg-white outline-hidden"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sticky Bottom Actions Bar */}
+          <div className="pt-4 border-t border-[#EFE8DF] flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl border border-[#E5DACB] text-xs font-bold text-[#6E5A4E] hover:bg-[#FAF7F2] transition-colors"
+              className="px-4 sm:px-5 py-2.5 rounded-xl border border-[#DED4C7] bg-[#FAF7F2] hover:bg-[#F2ECE4] text-xs font-bold text-[#6E5A4E] transition-colors cursor-pointer"
             >
               Cancelar
             </button>
-            <button
-              type="submit"
-              id="btn-save-publication"
-              className="inline-flex items-center gap-2 px-6 py-2.5 bg-[#5C3218] hover:bg-[#472611] text-white rounded-xl text-xs sm:text-sm font-bold shadow-sm transition-colors cursor-pointer"
-            >
-              <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>{bookToEdit ? 'Guardar Correcciones' : 'Publicar Libro'}</span>
-            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                id="publication-save-btn"
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-md hover:shadow-lg transition-all transform active:scale-95 cursor-pointer"
+              >
+                <Check className="w-4 h-4 stroke-[2.5]" />
+                <span>{bookToEdit ? 'Guardar y Publicar Cambios' : 'Publicar en el Catálogo'}</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>
