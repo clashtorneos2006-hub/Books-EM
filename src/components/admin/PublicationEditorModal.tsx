@@ -20,10 +20,12 @@ import {
   Images,
   Link as LinkIcon,
   ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { Book, BookStatus, CurrencyCode } from '../../types';
 import { formatPrice, getStatusDetails, compressImageFile, uploadImageToServer, FALLBACK_BOOK_COVER } from '../../utils/helpers';
 import { BcvRates, calculateBcvBreakdown, getCurrencySymbol } from '../../services/bcvRates';
+import { PRESET_COVER_SUGGESTIONS } from '../../data/initialData';
 
 interface PublicationEditorModalProps {
   isOpen: boolean;
@@ -76,12 +78,15 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
 
   const [newImageUrl, setNewImageUrl] = useState('');
   const [showUrlInput, setShowUrlInput] = useState(false);
+  const [showPresetGallery, setShowPresetGallery] = useState(false);
+  const [replacingImageIndex, setReplacingImageIndex] = useState<number | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isCompressing, setIsCompressing] = useState(false);
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
 
   // Available catalog list
   const availableGenres = Array.from(
@@ -133,6 +138,8 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
     setErrorMessage('');
     setActivePreviewIndex(0);
     setShowUrlInput(false);
+    setShowPresetGallery(false);
+    setReplacingImageIndex(null);
     setNewImageUrl('');
   }, [bookToEdit, isOpen]);
 
@@ -175,10 +182,67 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
     }
   };
 
+  // Replace a specific image with a newly uploaded file
+  const handleTriggerReplaceImage = (index: number) => {
+    setReplacingImageIndex(index);
+    if (replaceFileInputRef.current) {
+      replaceFileInputRef.current.value = '';
+      replaceFileInputRef.current.click();
+    }
+  };
+
+  const handleReplaceFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (replacingImageIndex === null) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('El archivo seleccionado no es una imagen válida.');
+      return;
+    }
+
+    setIsCompressing(true);
+    setErrorMessage('');
+    try {
+      const newUrl = await uploadImageToServer(file, `reemplazo_${replacingImageIndex + 1}`);
+      if (newUrl) {
+        setImages((prev) => {
+          const next = [...prev];
+          next[replacingImageIndex] = newUrl;
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Error al reemplazar imagen:', err);
+      setErrorMessage('Error al procesar la nueva imagen.');
+    } finally {
+      setIsCompressing(false);
+      setReplacingImageIndex(null);
+      if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
+    }
+  };
+
+  const makeCover = (index: number) => {
+    if (index === 0) return;
+    setImages((prev) => {
+      const copy = [...prev];
+      const [item] = copy.splice(index, 1);
+      copy.unshift(item);
+      return copy;
+    });
+    setActivePreviewIndex(0);
+  };
+
+  const handleSelectPresetCover = (url: string) => {
+    setImages((prev) => [url, ...prev.filter((u) => u !== url)]);
+    setShowPresetGallery(false);
+    setActivePreviewIndex(0);
+  };
+
   const handleAddImageUrl = () => {
     const trimmed = newImageUrl.trim();
     if (!trimmed) return;
-    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://') && !trimmed.startsWith('data:image/')) {
       setErrorMessage('La URL debe comenzar con http:// o https://');
       return;
     }
@@ -234,8 +298,8 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
       return;
     }
 
-    const finalImages = images.length > 0 ? images : [FALLBACK_BOOK_COVER];
-    const finalCover = finalImages[0];
+    const finalImages = images.length > 0 ? images.filter(Boolean) : [FALLBACK_BOOK_COVER];
+    const finalCover = finalImages[0] || FALLBACK_BOOK_COVER;
     const finalSynopsis = synopsis.trim() || `Publicación literaria de ${title.trim()}, escrita por ${author.trim()}. Consulta disponibilidad y entregas directas por WhatsApp.`;
 
     onSave(
@@ -243,17 +307,17 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
         title: title.trim(),
         author: author.trim(),
         genre: genre.trim() || 'Novela',
-        price: Number(price),
+        price: Number(price) || 0,
         currency,
         status,
         featured,
         coverUrl: finalCover,
         images: finalImages,
         synopsis: finalSynopsis,
-        editorial: editorial.trim() || undefined,
+        editorial: editorial.trim() || '',
         pages: pages ? Number(pages) : undefined,
         publishedYear: publishedYear ? Number(publishedYear) : undefined,
-        isbn: isbn.trim() || undefined,
+        isbn: isbn.trim() || '',
       },
       bookToEdit?.id
     );
@@ -529,11 +593,12 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
                   Fotos del Libro ({images.length})
                 </span>
                 <p className="text-[11px] text-[#7A6455] mt-0.5">
-                  La primera imagen es la portada principal. Puedes subir fotos desde tu dispositivo o añadir enlaces.
+                  La primera imagen es la portada principal. Puedes subir fotos, reemplazarlas, cambiarlas de orden o elegir de la galería.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Hidden input for new batch uploads */}
                 <input
                   type="file"
                   ref={fileInputRef}
@@ -542,6 +607,28 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
                   accept="image/*"
                   className="hidden"
                 />
+
+                {/* Hidden input for replacing a single image */}
+                <input
+                  type="file"
+                  ref={replaceFileInputRef}
+                  onChange={handleReplaceFileUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+
+                {/* Button: Choose Preset Cover */}
+                <button
+                  type="button"
+                  onClick={() => setShowPresetGallery(!showPresetGallery)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-950 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                  title="Elegir entre portadas literarias recomendadas"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                  <span>{showPresetGallery ? 'Ocultar Galería' : 'Portadas Listas'}</span>
+                </button>
+
+                {/* Button: Upload Photos */}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -549,8 +636,10 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#5C3218] hover:bg-[#472611] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer disabled:opacity-50"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>{isCompressing ? 'Procesando...' : 'Subir Fotos'}</span>
+                  <span>{isCompressing ? 'Optimizando...' : 'Subir Fotos'}</span>
                 </button>
+
+                {/* Button: Add Link */}
                 <button
                   type="button"
                   onClick={() => setShowUrlInput(!showUrlInput)}
@@ -562,9 +651,50 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
               </div>
             </div>
 
+            {/* Preset Covers Drawer */}
+            {showPresetGallery && (
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-2.5 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    Selecciona una portada literaria para agregar o reemplazar:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPresetGallery(false)}
+                    className="text-xs text-amber-800 hover:text-amber-950 font-semibold cursor-pointer"
+                  >
+                    ✕ Cerrar
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5">
+                  {PRESET_COVER_SUGGESTIONS.map((preset, pIdx) => (
+                    <button
+                      type="button"
+                      key={pIdx}
+                      onClick={() => handleSelectPresetCover(preset.url)}
+                      className="group flex flex-col items-center bg-white rounded-xl border border-amber-200 p-1.5 hover:border-amber-500 hover:shadow-md transition-all cursor-pointer text-left overflow-hidden"
+                      title={`Elegir ${preset.label}`}
+                    >
+                      <div className="aspect-[3/4] w-full rounded-lg overflow-hidden bg-stone-100 mb-1">
+                        <img
+                          src={preset.url}
+                          alt={preset.label}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        />
+                      </div>
+                      <span className="text-[10px] font-bold text-stone-700 line-clamp-1 w-full text-center">
+                        {preset.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* URL input field */}
             {showUrlInput && (
-              <div className="flex items-center gap-2 p-2 bg-white rounded-xl border border-[#DED4C7]">
+              <div className="flex items-center gap-2 p-2 bg-white rounded-xl border border-[#DED4C7] animate-in fade-in duration-150">
                 <input
                   type="url"
                   value={newImageUrl}
@@ -590,72 +720,126 @@ export const PublicationEditorModal: React.FC<PublicationEditorModalProps> = ({
 
             {/* Gallery Thumbnails List */}
             {images.length > 0 ? (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                 {images.map((imgUrl, idx) => (
                   <div
                     key={idx}
-                    className={`group relative rounded-xl overflow-hidden border-2 aspect-3/4 bg-stone-100 shadow-xs ${
-                      idx === 0 ? 'border-amber-500 ring-2 ring-amber-400/30' : 'border-stone-200'
+                    className={`group relative rounded-xl overflow-hidden border-2 aspect-[3/4] bg-stone-100 shadow-xs flex flex-col justify-between transition-all ${
+                      idx === 0 ? 'border-amber-500 ring-2 ring-amber-400/30' : 'border-stone-200 hover:border-stone-300'
                     }`}
                   >
                     <img
                       src={imgUrl}
                       alt={`Foto ${idx + 1}`}
-                      className="w-full h-full object-cover"
+                      className="absolute inset-0 w-full h-full object-cover"
                     />
-                    {idx === 0 && (
-                      <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-amber-500 text-white text-[9px] font-bold shadow-xs">
-                        Portada
-                      </span>
-                    )}
 
-                    {/* Actions on hover */}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1.5">
-                      <div className="flex justify-end">
+                    {/* Top Status Tags */}
+                    <div className="relative z-10 p-1.5 flex items-center justify-between pointer-events-none">
+                      {idx === 0 ? (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-bold shadow-xs flex items-center gap-1">
+                          <Star className="w-2.5 h-2.5 fill-white" />
+                          Portada
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[9px] font-bold backdrop-blur-xs">
+                          #{idx + 1}
+                        </span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        className="pointer-events-auto p-1 rounded-md bg-rose-600/90 hover:bg-rose-700 text-white shadow-xs cursor-pointer transition-colors"
+                        title="Eliminar esta foto"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Bottom Controls Bar */}
+                    <div className="relative z-10 p-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent flex flex-col gap-1 text-white">
+                      <div className="flex items-center justify-between gap-1">
+                        {idx !== 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => makeCover(idx)}
+                            className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-amber-950 transition-colors cursor-pointer"
+                            title="Establecer como portada principal"
+                          >
+                            Hacer Portada
+                          </button>
+                        ) : (
+                          <span className="text-[9px] font-bold text-amber-300">
+                            Portada Activa
+                          </span>
+                        )}
+
                         <button
                           type="button"
-                          onClick={() => removeImage(idx)}
-                          className="p-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
-                          title="Eliminar foto"
+                          onClick={() => handleTriggerReplaceImage(idx)}
+                          className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white/90 hover:bg-white text-stone-900 transition-colors cursor-pointer flex items-center gap-0.5"
+                          title="Reemplazar esta imagen por otra"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <RefreshCw className="w-2.5 h-2.5" />
+                          <span>Cambiar</span>
                         </button>
                       </div>
-                      <div className="flex items-center justify-between gap-1">
-                        {idx > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => moveImage(idx, 'left')}
-                            className="p-1 rounded-md bg-white/80 hover:bg-white text-black cursor-pointer text-[10px]"
-                            title="Mover a la izquierda (hacer portada)"
-                          >
-                            <ChevronLeft className="w-3 h-3" />
-                          </button>
-                        )}
-                        {idx < images.length - 1 && (
-                          <button
-                            type="button"
-                            onClick={() => moveImage(idx, 'right')}
-                            className="p-1 rounded-md bg-white/80 hover:bg-white text-black cursor-pointer text-[10px] ml-auto"
-                            title="Mover a la derecha"
-                          >
-                            <ChevronRight className="w-3 h-3" />
-                          </button>
-                        )}
+
+                      {/* Move left / right arrows */}
+                      <div className="flex items-center justify-between pt-0.5">
+                        <span className="text-[8px] text-stone-300">Reordenar:</span>
+                        <div className="flex items-center gap-1">
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => moveImage(idx, 'left')}
+                              className="p-1 rounded bg-white/20 hover:bg-white/40 text-white cursor-pointer"
+                              title="Mover foto a la izquierda"
+                            >
+                              <ChevronLeft className="w-3 h-3" />
+                            </button>
+                          )}
+                          {idx < images.length - 1 && (
+                            <button
+                              type="button"
+                              onClick={() => moveImage(idx, 'right')}
+                              className="p-1 rounded bg-white/20 hover:bg-white/40 text-white cursor-pointer"
+                              title="Mover foto a la derecha"
+                            >
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="p-6 text-center rounded-xl border-2 border-dashed border-[#DED4C7] bg-white">
-                <ImageIcon className="w-8 h-8 text-stone-300 mx-auto mb-2" />
+              <div className="p-6 text-center rounded-xl border-2 border-dashed border-[#DED4C7] bg-white space-y-2">
+                <ImageIcon className="w-8 h-8 text-stone-300 mx-auto mb-1" />
                 <p className="text-xs font-semibold text-[#7A6455]">
-                  No hay fotos cargadas aún para esta publicación.
+                  Sin fotos aún. Puedes subir imágenes propias o elegir de nuestras portadas listas.
                 </p>
-                <p className="text-[11px] text-stone-400 mt-0.5">
-                  Haz clic en «Subir Fotos» para seleccionar imágenes desde tu equipo.
-                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 bg-[#5C3218] hover:bg-[#472611] text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Subir desde Dispositivo / Cámara</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPresetGallery(true)}
+                    className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Elegir Portada de Galería</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>

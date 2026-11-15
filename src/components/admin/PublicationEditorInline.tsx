@@ -21,10 +21,12 @@ import {
   Sparkles,
   Link as LinkIcon,
   ArrowUpDown,
+  RefreshCw,
 } from 'lucide-react';
 import { Book, BookStatus, CurrencyCode } from '../../types';
 import { formatPrice, getStatusDetails, compressImageFile, uploadImageToServer, FALLBACK_BOOK_COVER } from '../../utils/helpers';
 import { BcvRates, calculateBcvBreakdown, getCurrencySymbol } from '../../services/bcvRates';
+import { PRESET_COVER_SUGGESTIONS } from '../../data/initialData';
 
 interface PublicationEditorInlineProps {
   bookToEdit: Book | null;
@@ -74,6 +76,8 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
   // Auxiliary state for URL input and live preview carousel
   const [urlInput, setUrlInput] = useState('');
   const [showUrlInput, setShowUrlInput] = useState(false);
+  const [showPresetGallery, setShowPresetGallery] = useState(false);
+  const [replacingImageIndex, setReplacingImageIndex] = useState<number | null>(null);
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
   const [isHoveringPreview, setIsHoveringPreview] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
@@ -81,6 +85,7 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (bookToEdit) {
@@ -93,7 +98,7 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
       setFeatured(bookToEdit.featured);
       
       const initialImgs = (Array.isArray(bookToEdit.images) && bookToEdit.images.length > 0)
-        ? bookToEdit.images
+        ? bookToEdit.images.filter(Boolean)
         : (bookToEdit.coverUrl ? [bookToEdit.coverUrl] : []);
       setImages(initialImgs);
       
@@ -122,6 +127,9 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
     }
     setErrorMessage('');
     setActivePreviewIndex(0);
+    setShowUrlInput(false);
+    setShowPresetGallery(false);
+    setReplacingImageIndex(null);
   }, [bookToEdit]);
 
   // Rotate images in preview every 5 seconds (pauses when admin hovers to inspect)
@@ -154,7 +162,6 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
     setErrorMessage('');
 
     try {
-      // Upload all images to server so they become permanent public URLs (/uploads/...) for all users
       const uploadResults = await Promise.all(
         validFiles.map((file, idx) => uploadImageToServer(file, `libro_${idx + 1}`))
       );
@@ -174,6 +181,52 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
       setIsCompressing(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  // Replace a specific image
+  const handleTriggerReplaceImage = (index: number) => {
+    setReplacingImageIndex(index);
+    if (replaceFileInputRef.current) {
+      replaceFileInputRef.current.value = '';
+      replaceFileInputRef.current.click();
+    }
+  };
+
+  const handleReplaceFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (replacingImageIndex === null) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('El archivo seleccionado no es una imagen válida.');
+      return;
+    }
+
+    setIsCompressing(true);
+    setErrorMessage('');
+    try {
+      const newUrl = await uploadImageToServer(file, `reemplazo_${replacingImageIndex + 1}`);
+      if (newUrl) {
+        setImages((prev) => {
+          const next = [...prev];
+          next[replacingImageIndex] = newUrl;
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Error al reemplazar imagen:', err);
+      setErrorMessage('Error al procesar la nueva imagen.');
+    } finally {
+      setIsCompressing(false);
+      setReplacingImageIndex(null);
+      if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
+    }
+  };
+
+  const handleSelectPresetCover = (url: string) => {
+    setImages((prev) => [url, ...prev.filter((u) => u !== url)]);
+    setShowPresetGallery(false);
+    setActivePreviewIndex(0);
   };
 
   const handleAddUrlImage = () => {
@@ -237,27 +290,25 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
       return;
     }
 
-    if (images.length === 0) {
-      setErrorMessage('Por favor sube al menos una foto para la portada de la publicación (se recomienda un mínimo de 6 fotos).');
-      return;
-    }
+    const finalImages = images.length > 0 ? images.filter(Boolean) : [FALLBACK_BOOK_COVER];
+    const finalCover = finalImages[0] || FALLBACK_BOOK_COVER;
 
     onSave(
       {
         title: title.trim(),
         author: author.trim(),
         genre: genre.trim(),
-        price: Number(price),
+        price: Number(price) || 0,
         currency,
         status,
         featured,
-        coverUrl: images[0],
-        images: images,
+        coverUrl: finalCover,
+        images: finalImages,
         synopsis: synopsis.trim(),
-        editorial: editorial.trim() || undefined,
+        editorial: editorial.trim() || '',
         pages: pages ? Number(pages) : undefined,
         publishedYear: publishedYear ? Number(publishedYear) : undefined,
-        isbn: isbn.trim() || undefined,
+        isbn: isbn.trim() || '',
       },
       bookToEdit?.id
     );
@@ -681,7 +732,16 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowPresetGallery(!showPresetGallery)}
+                    className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-950 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                    title="Elegir portadas literarias listas"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                    <span>{showPresetGallery ? 'Ocultar Galería' : 'Portadas Listas'}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setShowUrlInput(!showUrlInput)}
@@ -722,6 +782,55 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
                 accept="image/*"
                 className="hidden"
               />
+
+              {/* Hidden file input for replacing an individual image */}
+              <input
+                type="file"
+                ref={replaceFileInputRef}
+                onChange={handleReplaceFileUpload}
+                accept="image/*"
+                className="hidden"
+              />
+
+              {/* Preset Covers Drawer */}
+              {showPresetGallery && (
+                <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-2.5 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-600" />
+                      Elige una portada estética recomendada:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowPresetGallery(false)}
+                      className="text-xs text-amber-800 hover:text-amber-950 font-semibold cursor-pointer"
+                    >
+                      ✕ Cerrar
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                    {PRESET_COVER_SUGGESTIONS.map((preset, pIdx) => (
+                      <button
+                        type="button"
+                        key={pIdx}
+                        onClick={() => handleSelectPresetCover(preset.url)}
+                        className="group flex flex-col items-center bg-white rounded-xl border border-amber-200 p-1.5 hover:border-amber-500 hover:shadow-md transition-all cursor-pointer text-left overflow-hidden"
+                      >
+                        <div className="aspect-[3/4] w-full rounded-lg overflow-hidden bg-stone-100 mb-1">
+                          <img
+                            src={preset.url}
+                            alt={preset.label}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                        </div>
+                        <span className="text-[10px] font-bold text-stone-700 line-clamp-1 w-full text-center">
+                          {preset.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Optional URL addition bar */}
               {showUrlInput && (
@@ -807,42 +916,57 @@ export const PublicationEditorInline: React.FC<PublicationEditorInlineProps> = (
                           </div>
 
                           {/* Bottom Action Bar */}
-                          <div className="absolute bottom-0 inset-x-0 p-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent flex items-center justify-between gap-1 z-10">
-                            {!isCover ? (
+                          <div className="absolute bottom-0 inset-x-0 p-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent flex flex-col gap-1 z-10">
+                            <div className="flex items-center justify-between gap-1">
+                              {!isCover ? (
+                                <button
+                                  type="button"
+                                  onClick={() => makeCover(idx)}
+                                  className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-amber-950 transition-colors cursor-pointer"
+                                >
+                                  Hacer Portada
+                                </button>
+                              ) : (
+                                <span className="text-[9px] font-bold text-amber-300">
+                                  Portada activa
+                                </span>
+                              )}
+
                               <button
                                 type="button"
-                                onClick={() => makeCover(idx)}
-                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white/90 hover:bg-white text-[#5C3218] transition-colors cursor-pointer"
+                                onClick={() => handleTriggerReplaceImage(idx)}
+                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white/90 hover:bg-white text-stone-900 transition-colors cursor-pointer flex items-center gap-0.5"
+                                title="Reemplazar esta foto"
                               >
-                                Hacer Portada
+                                <RefreshCw className="w-2.5 h-2.5" />
+                                <span>Cambiar</span>
                               </button>
-                            ) : (
-                              <span className="text-[9px] font-bold text-white/90">
-                                Portada activa
-                              </span>
-                            )}
+                            </div>
 
-                            <div className="flex items-center gap-0.5">
-                              {idx > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => moveImage(idx, -1)}
-                                  className="w-5 h-5 rounded bg-white/80 hover:bg-white text-stone-800 flex items-center justify-center cursor-pointer"
-                                  title="Mover a la izquierda"
-                                >
-                                  <ChevronLeft className="w-3 h-3" />
-                                </button>
-                              )}
-                              {idx < images.length - 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => moveImage(idx, 1)}
-                                  className="w-5 h-5 rounded bg-white/80 hover:bg-white text-stone-800 flex items-center justify-center cursor-pointer"
-                                  title="Mover a la derecha"
-                                >
-                                  <ChevronRight className="w-3 h-3" />
-                                </button>
-                              )}
+                            <div className="flex items-center justify-between text-white pt-0.5">
+                              <span className="text-[8px] text-stone-300">Reordenar:</span>
+                              <div className="flex items-center gap-1">
+                                {idx > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => moveImage(idx, -1)}
+                                    className="w-4 h-4 rounded bg-white/20 hover:bg-white/40 text-white flex items-center justify-center cursor-pointer"
+                                    title="Mover a la izquierda"
+                                  >
+                                    <ChevronLeft className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
+                                {idx < images.length - 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => moveImage(idx, 1)}
+                                    className="w-4 h-4 rounded bg-white/20 hover:bg-white/40 text-white flex items-center justify-center cursor-pointer"
+                                    title="Mover a la derecha"
+                                  >
+                                    <ChevronRight className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>

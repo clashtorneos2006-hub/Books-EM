@@ -17,7 +17,7 @@ import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { AppIntroSplash } from './components/AppIntroSplash';
 import { PublicationEditorModal } from './components/admin/PublicationEditorModal';
 import { MessageCircle, Loader2, CheckCircle2 } from 'lucide-react';
-import { cleanPhoneNumber } from './utils/helpers';
+import { cleanPhoneNumber, FALLBACK_BOOK_COVER } from './utils/helpers';
 import { Book } from './types';
 import { DEFAULT_STORE_SETTINGS } from './data/initialData';
 
@@ -136,10 +136,10 @@ export default function App() {
           onToggleFeatured={toggleFeatured}
           onUpdateBookStatus={updateBookStatus}
           onUpdateSettings={updateSettings}
-          onResetToDefaults={resetToDefaults}
+          onResetDefaults={resetToDefaults}
           onImportCatalog={importCatalog}
-          onRefreshBcvRates={refreshBcvRates}
-          onUpdateBcvRates={updateBcvRates}
+          onRefreshRates={refreshBcvRates}
+          onUpdateRates={updateBcvRates}
           catalogs={catalogs}
           onAddCatalog={addCatalog}
           onUpdateCatalog={updateCatalog}
@@ -287,11 +287,11 @@ export default function App() {
               const existing = books.find((b) => b.id === existingId) || storeEditingBook;
               const finalImages =
                 bookData.images && bookData.images.length > 0
-                  ? bookData.images
+                  ? bookData.images.filter(Boolean)
                   : bookData.coverUrl
                   ? [bookData.coverUrl]
                   : existing?.images || [];
-              const finalCover = finalImages[0] || bookData.coverUrl || existing?.coverUrl || '';
+              const finalCover = finalImages[0] || bookData.coverUrl || existing?.coverUrl || FALLBACK_BOOK_COVER;
 
               const updated: Book = {
                 ...(existing || {}),
@@ -301,6 +301,8 @@ export default function App() {
                 coverUrl: finalCover,
                 images: finalImages.length > 0 ? finalImages : [finalCover],
                 price: Number(bookData.price) || 0,
+                editorial: bookData.editorial || '',
+                isbn: bookData.isbn || '',
               };
               updateBook(updated);
               showStoreToast(`Publicación «${updated.title}» actualizada con éxito. Cambios visibles de inmediato para los clientes.`);

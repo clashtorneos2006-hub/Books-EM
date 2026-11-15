@@ -216,10 +216,8 @@ export function useBooksStore() {
         const serverBooks = await res.json();
         if (Array.isArray(serverBooks) && serverBooks.length > 0) {
           setBooks((prev) => {
-            // Check if there are changes to avoid needless re-render
-            const prevSerialized = JSON.stringify(prev);
-            const nextSerialized = JSON.stringify(serverBooks);
-            if (prevSerialized !== nextSerialized) {
+            // Only adopt server disk books if local state is empty
+            if (!prev || prev.length === 0) {
               return serverBooks;
             }
             return prev;
@@ -270,18 +268,11 @@ export function useBooksStore() {
       console.warn('Firestore seeding check failed:', err);
     });
 
-    // 1. Instant Real-time listener for all books (adds, edits, status, deletions)
+    // 1. Instant Real-time listener for all books (adds, edits, status, deletions) across all devices
     const unsubBooks = subscribeToBooks(
       (firestoreBooks) => {
         if (Array.isArray(firestoreBooks) && firestoreBooks.length > 0) {
-          setBooks((prev) => {
-            const prevSerialized = JSON.stringify(prev);
-            const nextSerialized = JSON.stringify(firestoreBooks);
-            if (prevSerialized !== nextSerialized) {
-              return firestoreBooks;
-            }
-            return prev;
-          });
+          setBooks(firestoreBooks);
         }
         setIsFirebaseConnected(true);
       },
@@ -315,85 +306,76 @@ export function useBooksStore() {
       }
     );
 
-    // Also keep background sync with server API as dual-redundancy
-    fetchServerBooks();
-    fetchServerSettings();
-    fetchServerCatalogs();
-
-    const onFocus = () => {
-      fetchServerBooks();
-      fetchServerSettings();
-      fetchServerCatalogs();
-    };
-
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('visibilitychange', onFocus);
-
     return () => {
       unsubBooks();
       unsubSettings();
       unsubCatalogs();
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('visibilitychange', onFocus);
     };
-  }, [fetchServerBooks, fetchServerSettings, fetchServerCatalogs]);
+  }, []);
 
   // CRUD Methods with optimistic UI + Firebase Real-time + persistent server sync
-  const addBook = (newBookData: Omit<Book, 'id' | 'createdAt'>) => {
-    const images = Array.isArray(newBookData.images) && newBookData.images.length > 0
+  const addBook = (newBookData: Omit<Book, 'id' | 'createdAt'>): Book => {
+    const rawImages = Array.isArray(newBookData.images) && newBookData.images.length > 0
       ? newBookData.images.filter(Boolean)
       : (newBookData.coverUrl ? [newBookData.coverUrl] : []);
-    const coverUrl = images[0] || newBookData.coverUrl || '';
+    const coverUrl = rawImages[0] || newBookData.coverUrl || '';
 
     const newBook: Book = {
       ...newBookData,
       id: `book-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       createdAt: Date.now(),
       coverUrl,
-      images: images.length > 0 ? images : [coverUrl],
+      images: rawImages.length > 0 ? rawImages : (coverUrl ? [coverUrl] : []),
       price: Number(newBookData.price) || 0,
+      currency: newBookData.currency || 'USD',
+      status: newBookData.status || 'disponible',
+      featured: Boolean(newBookData.featured),
+      editorial: newBookData.editorial || '',
+      pages: newBookData.pages ? Number(newBookData.pages) : undefined,
+      publishedYear: newBookData.publishedYear ? Number(newBookData.publishedYear) : undefined,
+      isbn: newBookData.isbn || '',
     };
 
     // Optimistic UI update
-    setBooks((prev) => [newBook, ...prev]);
+    setBooks((prev) => [newBook, ...prev.filter((b) => b.id !== newBook.id)]);
 
-    // Real-time Firebase Firestore broadcast to all connected visitors
-    saveBookToFirestore(newBook).catch((err) => {
-      console.warn('Firebase save book error:', err);
-    });
+    // Real-time Firebase Firestore broadcast to all connected visitors and devices
+    saveBookToFirestore(newBook)
+      .then(() => {
+        console.log(`[useBooksStore] Libro ${newBook.id} guardado y transmitido en tiempo real por Firebase.`);
+      })
+      .catch((err) => {
+        console.error('Firebase save book error:', err);
+      });
 
-    // Dual-layer server sync
+    // Dual-layer server sync in background
     fetch('/api/books', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newBook),
-    })
-      .then(async (res) => {
-        if (res.ok) {
-          const savedBook = await res.json();
-          if (savedBook && savedBook.id) {
-            setBooks((prev) => prev.map((b) => (b.id === newBook.id ? savedBook : b)));
-          }
-        }
-      })
-      .catch((err) => {
-        console.warn('Error syncing new book to server:', err);
-      });
+    }).catch(() => {});
 
     return newBook;
   };
 
-  const updateBook = (updated: Book) => {
-    const images = Array.isArray(updated.images) && updated.images.length > 0
+  const updateBook = (updated: Book): Book => {
+    const rawImages = Array.isArray(updated.images) && updated.images.length > 0
       ? updated.images.filter(Boolean)
       : (updated.coverUrl ? [updated.coverUrl] : []);
-    const coverUrl = images[0] || updated.coverUrl || '';
+    const coverUrl = rawImages[0] || updated.coverUrl || '';
 
     const sanitizedBook: Book = {
       ...updated,
       coverUrl,
-      images: images.length > 0 ? images : [coverUrl],
+      images: rawImages.length > 0 ? rawImages : (coverUrl ? [coverUrl] : []),
       price: Number(updated.price) || 0,
+      currency: updated.currency || 'USD',
+      status: updated.status || 'disponible',
+      featured: Boolean(updated.featured),
+      editorial: updated.editorial || '',
+      pages: updated.pages ? Number(updated.pages) : undefined,
+      publishedYear: updated.publishedYear ? Number(updated.publishedYear) : undefined,
+      isbn: updated.isbn || '',
     };
 
     // Optimistic UI update
@@ -403,30 +385,20 @@ export function useBooksStore() {
     }
 
     // Real-time Firebase Firestore broadcast
-    saveBookToFirestore(sanitizedBook).catch((err) => {
-      console.warn('Firebase update book error:', err);
-    });
+    saveBookToFirestore(sanitizedBook)
+      .then(() => {
+        console.log(`[useBooksStore] Libro ${sanitizedBook.id} actualizado y transmitido en tiempo real.`);
+      })
+      .catch((err) => {
+        console.error('Firebase update book error:', err);
+      });
 
     // Dual-layer server sync
     fetch(`/api/books/${encodeURIComponent(sanitizedBook.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sanitizedBook),
-    })
-      .then(async (res) => {
-        if (res.ok) {
-          const savedBook = await res.json();
-          if (savedBook && savedBook.id) {
-            setBooks((prev) => prev.map((b) => (b.id === savedBook.id ? savedBook : b)));
-            if (selectedBook?.id === savedBook.id) {
-              setSelectedBook(savedBook);
-            }
-          }
-        }
-      })
-      .catch((err) => {
-        console.warn('Error syncing book update to server:', err);
-      });
+    }).catch(() => {});
 
     return sanitizedBook;
   };

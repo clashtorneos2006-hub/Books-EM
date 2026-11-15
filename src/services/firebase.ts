@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { Book, BookStatus, StoreSettings } from '../types';
 import rawConfig from '../../firebase-applet-config.json';
+import { FALLBACK_BOOK_COVER } from '../utils/helpers';
 
 export const firebaseConfig = rawConfig;
 
@@ -28,6 +29,71 @@ export const db: Firestore = getFirestore(
     : undefined
 );
 
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: null,
+      email: null,
+      emailVerified: null,
+      isAnonymous: true,
+      tenantId: null,
+      providerInfo: [],
+    },
+    operationType,
+    path,
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+/**
+ * Deeply sanitizes an object for Firestore by omitting any fields with `undefined` values.
+ * Firestore strictly rejects documents containing `undefined` properties.
+ */
+export function sanitizeForFirestore<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      clean[key] = sanitizeForFirestore(value);
+    } else if (Array.isArray(value)) {
+      clean[key] = value.filter((item) => item !== undefined);
+    } else {
+      clean[key] = value;
+    }
+  }
+  return clean;
+}
+
 const BOOKS_COLLECTION = 'books';
 const SETTINGS_DOC_ID = 'store_settings';
 const CATALOGS_DOC_ID = 'catalog_genres';
@@ -35,7 +101,7 @@ const CATALOGS_DOC_ID = 'catalog_genres';
 /**
  * Subscribe to real-time updates for books catalog.
  * Any admin change (add, edit, status change, delete, toggle featured)
- * triggers instant notification to all active clients.
+ * triggers instant notification to all active clients across all devices.
  */
 export function subscribeToBooks(
   onUpdate: (books: Book[]) => void,
@@ -49,9 +115,9 @@ export function subscribeToBooks(
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         const primaryImages = Array.isArray(data.images) && data.images.length > 0
-          ? data.images
+          ? data.images.filter(Boolean)
           : (data.coverUrl ? [data.coverUrl] : []);
-        const primaryCover = primaryImages[0] || data.coverUrl || '';
+        const primaryCover = primaryImages[0] || data.coverUrl || FALLBACK_BOOK_COVER;
 
         booksList.push({
           id: docSnap.id,
@@ -63,17 +129,17 @@ export function subscribeToBooks(
           status: data.status || 'disponible',
           featured: Boolean(data.featured),
           coverUrl: primaryCover,
-          images: primaryImages.length > 0 ? primaryImages : (primaryCover ? [primaryCover] : []),
+          images: primaryImages.length > 0 ? primaryImages : [primaryCover],
           synopsis: data.synopsis || '',
-          editorial: data.editorial,
+          editorial: data.editorial || '',
           pages: data.pages ? Number(data.pages) : undefined,
           publishedYear: data.publishedYear ? Number(data.publishedYear) : undefined,
-          isbn: data.isbn,
-          createdAt: data.createdAt || Date.now(),
+          isbn: data.isbn || '',
+          createdAt: Number(data.createdAt) || Date.now(),
         });
       });
 
-      // Sort by creation date descending
+      // Sort by creation date descending (newest publications first)
       booksList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       onUpdate(booksList);
     },
@@ -134,14 +200,29 @@ export function subscribeToCatalogs(
 
 /**
  * Save or update a book in Firestore.
+ * Automatically sanitizes properties to prevent undefined values.
  */
 export async function saveBookToFirestore(book: Book): Promise<void> {
   const docRef = doc(db, BOOKS_COLLECTION, book.id);
-  const dataToSave = {
+  const rawImages = Array.isArray(book.images) && book.images.length > 0
+    ? book.images.filter(Boolean)
+    : (book.coverUrl ? [book.coverUrl] : []);
+  const coverUrl = rawImages[0] || book.coverUrl || FALLBACK_BOOK_COVER;
+
+  const dataToSave = sanitizeForFirestore({
     ...book,
+    coverUrl,
+    images: rawImages.length > 0 ? rawImages : [coverUrl],
+    price: Number(book.price) || 0,
     updatedAt: Date.now(),
-  };
-  await setDoc(docRef, dataToSave, { merge: true });
+  });
+
+  try {
+    await setDoc(docRef, dataToSave, { merge: true });
+    console.log(`[Firestore] Publicación «${book.title}» sincronizada en tiempo real con éxito.`);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `books/${book.id}`);
+  }
 }
 
 /**
@@ -149,7 +230,12 @@ export async function saveBookToFirestore(book: Book): Promise<void> {
  */
 export async function deleteBookFromFirestore(bookId: string): Promise<void> {
   const docRef = doc(db, BOOKS_COLLECTION, bookId);
-  await deleteDoc(docRef);
+  try {
+    await deleteDoc(docRef);
+    console.log(`[Firestore] Publicación «${bookId}» eliminada en tiempo real.`);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `books/${bookId}`);
+  }
 }
 
 /**
@@ -157,10 +243,14 @@ export async function deleteBookFromFirestore(bookId: string): Promise<void> {
  */
 export async function updateBookStatusInFirestore(bookId: string, status: BookStatus): Promise<void> {
   const docRef = doc(db, BOOKS_COLLECTION, bookId);
-  await updateDoc(docRef, {
-    status,
-    updatedAt: Date.now(),
-  });
+  try {
+    await updateDoc(docRef, {
+      status,
+      updatedAt: Date.now(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `books/${bookId}`);
+  }
 }
 
 /**
@@ -168,10 +258,14 @@ export async function updateBookStatusInFirestore(bookId: string, status: BookSt
  */
 export async function toggleBookFeaturedInFirestore(bookId: string, featured: boolean): Promise<void> {
   const docRef = doc(db, BOOKS_COLLECTION, bookId);
-  await updateDoc(docRef, {
-    featured,
-    updatedAt: Date.now(),
-  });
+  try {
+    await updateDoc(docRef, {
+      featured,
+      updatedAt: Date.now(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `books/${bookId}`);
+  }
 }
 
 /**
@@ -179,7 +273,12 @@ export async function toggleBookFeaturedInFirestore(bookId: string, featured: bo
  */
 export async function saveSettingsToFirestore(settings: StoreSettings): Promise<void> {
   const docRef = doc(db, 'settings', SETTINGS_DOC_ID);
-  await setDoc(docRef, { ...settings, updatedAt: Date.now() }, { merge: true });
+  const dataToSave = sanitizeForFirestore({ ...settings, updatedAt: Date.now() });
+  try {
+    await setDoc(docRef, dataToSave, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `settings/${SETTINGS_DOC_ID}`);
+  }
 }
 
 /**
@@ -187,7 +286,12 @@ export async function saveSettingsToFirestore(settings: StoreSettings): Promise<
  */
 export async function saveCatalogsToFirestore(catalogs: string[]): Promise<void> {
   const docRef = doc(db, 'catalogs', CATALOGS_DOC_ID);
-  await setDoc(docRef, { items: catalogs, updatedAt: Date.now() }, { merge: true });
+  const cleanList = Array.isArray(catalogs) ? catalogs.filter(Boolean) : [];
+  try {
+    await setDoc(docRef, { items: cleanList, updatedAt: Date.now() }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `catalogs/${CATALOGS_DOC_ID}`);
+  }
 }
 
 /**
@@ -203,21 +307,22 @@ export async function seedFirestoreIfEmpty(
     const snap = await getDocs(booksRef);
 
     if (snap.empty && initialBooks.length > 0) {
-      console.log('Seeding initial books to Firestore...');
+      console.log('Poblando catálogo inicial en Firestore...');
       const batch = writeBatch(db);
       for (const book of initialBooks) {
         const bookDoc = doc(db, BOOKS_COLLECTION, book.id);
-        batch.set(bookDoc, { ...book, createdAt: book.createdAt || Date.now() });
+        const cleanBook = sanitizeForFirestore({ ...book, createdAt: book.createdAt || Date.now() });
+        batch.set(bookDoc, cleanBook);
       }
       await batch.commit();
-      console.log('Books seeded to Firestore successfully.');
+      console.log('Catálogo inicial poblado en Firestore exitosamente.');
     }
 
     // Seed settings if missing
     const settingsDocRef = doc(db, 'settings', SETTINGS_DOC_ID);
     const settingsSnap = await getDocs(collection(db, 'settings'));
     if (settingsSnap.empty) {
-      await setDoc(settingsDocRef, { ...initialSettings, updatedAt: Date.now() });
+      await setDoc(settingsDocRef, sanitizeForFirestore({ ...initialSettings, updatedAt: Date.now() }));
     }
 
     // Seed catalogs if missing

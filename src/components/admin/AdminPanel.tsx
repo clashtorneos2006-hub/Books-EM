@@ -27,7 +27,7 @@ import {
   Tags,
 } from 'lucide-react';
 import { Book, BookStatus, StoreSettings } from '../../types';
-import { formatPrice, getStatusDetails, buildWhatsAppMessage, cleanPhoneNumber } from '../../utils/helpers';
+import { formatPrice, getStatusDetails, buildWhatsAppMessage, cleanPhoneNumber, FALLBACK_BOOK_COVER } from '../../utils/helpers';
 import { BcvRates, calculateBcvBreakdown } from '../../services/bcvRates';
 import { DEFAULT_STORE_SETTINGS } from '../../data/initialData';
 import { PublicationCard } from './PublicationCard';
@@ -216,9 +216,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (existingId) {
       const existing = books.find((b) => b.id === existingId) || editingBook;
       const finalImages = (bookData.images && bookData.images.length > 0)
-        ? bookData.images
+        ? bookData.images.filter(Boolean)
         : (bookData.coverUrl ? [bookData.coverUrl] : (existing?.images || []));
-      const finalCover = finalImages[0] || bookData.coverUrl || existing?.coverUrl || '';
+      const finalCover = finalImages[0] || bookData.coverUrl || existing?.coverUrl || FALLBACK_BOOK_COVER;
 
       const updated: Book = {
         ...(existing || {}),
@@ -228,12 +228,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         coverUrl: finalCover,
         images: finalImages.length > 0 ? finalImages : [finalCover],
         price: Number(bookData.price) || 0,
+        editorial: bookData.editorial || '',
+        isbn: bookData.isbn || '',
       };
       onUpdateBook(updated);
-      showToast(`Publicación «${updated.title}» modificada con éxito`);
+      showToast(`Publicación «${updated.title}» sincronizada en tiempo real con éxito`);
     } else {
       const created = onAddBook(bookData);
-      showToast(`Nueva publicación «${bookData.title}» agregada al catálogo`);
+      showToast(`Nueva publicación «${bookData.title}» publicada en tiempo real`);
     }
   };
 
