@@ -3,6 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        // In AI Studio iFrame container preview, HMR WebSocket is disabled.
+        // Ignore harmless WebSocket disconnection warnings to prevent spurious UI error banners.
+        const isWsError = function(str) {
+          return typeof str === 'string' && (str.includes('WebSocket closed without opened') || (str.includes('[vite]') && str.includes('WebSocket')));
+        };
+        const origError = console.error;
+        console.error = function(...args) {
+          if (args.some(function(arg) {
+            return isWsError(arg) || (arg instanceof Error && isWsError(arg.message));
+          })) {
+            return;
+          }
+          origError.apply(console, args);
+        };
+        window.addEventListener('error', function(event) {
+          if (event.message && isWsError(event.message)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
     <title>Books EM</title>
     <meta name="description" content="Catálogo y librería online Books EM con compras por WhatsApp, visualización de tasas de cambio oficiales BCV y panel de administración." />
     <meta property="og:title" content="Books EM" />

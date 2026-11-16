@@ -1,3 +1,5 @@
+process.env.DISABLE_HMR = 'true';
+
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
