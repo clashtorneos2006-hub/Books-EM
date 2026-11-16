@@ -61,7 +61,7 @@ export const AdminBottomDock: React.FC<AdminBottomDockProps> = ({
     <aside
       aria-label="Barra inferior de navegación y control de administración"
       id="admin-bottom-dock"
-      className="shrink-0 w-full z-50 bg-white/98 backdrop-blur-md border-t-2 border-[#8C5E3C] shadow-[0_-8px_30px_rgba(45,33,24,0.14)] pb-[max(0.35rem,env(safe-area-inset-bottom))]"
+      className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t-2 border-[#8C5E3C] shadow-[0_-10px_35px_rgba(45,33,24,0.14)]"
     >
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
         {/* If a publication is selected, display immediate quick-action modification strip */}

@@ -431,7 +431,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   return (
     <div
       id="admin-fullscreen-page"
-      className="fixed inset-0 w-full h-full h-[100dvh] bg-[#FAF7F2] text-[#2C2420] flex flex-col overflow-hidden selection:bg-[#E8DCCF] z-40"
+      className="min-h-screen bg-[#FAF7F2] text-[#2C2420] flex flex-col selection:bg-[#E8DCCF]"
     >
       {/* Toast Notification */}
       {feedbackToast && (
@@ -442,7 +442,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             type="button"
             onClick={onClose}
             className="ml-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
-            title="Ver los cambios en la tienda para los clientes"
+            title="Ver los cambios en vivo en la tienda para los clientes"
           >
             <Eye className="w-3.5 h-3.5" />
             <span>Ver en Tienda</span>
@@ -452,7 +452,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {/* TOP BAR: Header of the Fullscreen Admin Page */}
       <header className="px-4 sm:px-6 lg:px-8 py-3 bg-white border-b border-[#E8DFD0] shadow-xs flex items-center justify-between gap-3 shrink-0 z-20">
-        {/* Left: Action buttons */}
+        {/* Left: Replaced title with Add action, shifted Eye button, and shifted Exit button */}
         <div className="flex items-center gap-2 sm:gap-2.5">
           {/* Button: Añadir Publicación */}
           <button
@@ -465,12 +465,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <span className="font-bold">Añadir Publicación</span>
           </button>
 
-          {/* Button: Eye - Ver Tienda */}
+          {/* Button: Eye - Ver Tienda para ver y modificar la aplicación */}
           <button
             onClick={onClose}
             id="admin-return-store-btn"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#FAF7F2] hover:bg-[#F2ECE4] text-[#5C3218] border border-[#E8DFC8] rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs hover:shadow-xs group"
-            title="Ver la tienda tal como los clientes"
+            title="Ver la tienda y modificaciones en tiempo real tal como los clientes"
           >
             <Eye className="w-4 h-4 text-[#5C3218] group-hover:text-emerald-700 transition-colors" />
             <span>Ver Tienda</span>
@@ -487,11 +487,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <LogOut className="w-4 h-4 text-rose-600" />
             <span>Salir</span>
           </button>
+
+          {/* Button: Tasas BCV (Monitor de Tasas del Día) */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('rates')}
+            id="admin-top-rates-btn"
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs ${
+              activeTab === 'rates'
+                ? 'bg-[#5C3218] text-white shadow-xs'
+                : 'bg-[#FAF7F2] hover:bg-[#F2ECE4] text-[#5C3218] border border-[#E8DFC8]'
+            }`}
+            title="Monitorear y supervisar tasas oficiales del día (BCV)"
+          >
+            <TrendingUp
+              className={`w-4 h-4 ${
+                activeTab === 'rates' ? 'text-emerald-300' : 'text-emerald-600'
+              }`}
+            />
+            <span>Tasas BCV</span>
+          </button>
         </div>
 
-        {/* Right: Current Section Indicator (Clean, without En Vivo or Tasas BCV) */}
+        {/* Right: Current Section Indicator + Firebase Live Status */}
         <div className="flex items-center gap-2 sm:gap-3">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF7F2] border border-[#E8DFC8] rounded-xl text-xs font-bold text-[#5C3218] shadow-2xs">
+          {/* Firebase Realtime Connection Badge */}
+          <div
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold shadow-2xs"
+            title="Conexión en tiempo real activa: los cambios se sincronizan inmediatamente con todos los lectores"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="hidden sm:inline font-bold">Firebase en vivo</span>
+            <span className="sm:hidden font-bold">En vivo</span>
+          </div>
+
+          {/* Section Indicator */}
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF7F2] border border-[#E8DFC8] rounded-xl text-xs font-bold text-[#5C3218]">
             {activeTab === 'publications' && (
               <>
                 <BookOpen className="w-3.5 h-3.5" />
@@ -507,7 +538,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             {activeTab === 'rates' && (
               <>
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Tasas del Día (BCV)</span>
+                <span>Monitor Tasas BCV</span>
               </>
             )}
             {activeTab === 'whatsapp' && (
@@ -519,7 +550,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             {activeTab === 'store' && (
               <>
                 <StoreIcon className="w-3.5 h-3.5" />
-                <span>Tienda & Portada</span>
+                <span>Ajustes</span>
               </>
             )}
           </div>
@@ -527,7 +558,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       </header>
 
       {/* MAIN SCROLLABLE CONTENT AREA */}
-      <main className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 lg:px-8 py-5 sm:py-6 pb-6">
+      <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 pb-32 sm:pb-28">
         {/* ========================================================================= */}
         {/* SECCIÓN 1: PUBLICACIONES */}
         {/* ========================================================================= */}
@@ -1565,44 +1596,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         )}
       </main>
 
-      {/* FIXED BOTTOM NAVIGATION DOCK (Permanente e Inamovible) */}
-      <AdminBottomDock
-        activeTab={activeTab}
-        onTabChange={(newTab) => {
-          if (isEditorModalOpen) {
-            setIsEditorModalOpen(false);
-            setEditingBook(null);
-            onClearDirectEditBook?.();
-          }
-          setActiveTab(newTab);
-        }}
-        selectedBook={selectedBook}
-        currencySymbol={safeSettings.currencySymbol}
-        bcvRates={bcvRates}
-        totalBooksCount={books.length}
-        catalogsCount={catalogs.length}
-        onOpenAddModal={handleOpenAddModal}
-        onEditSelected={() => {
-          if (selectedBook) {
-            handleOpenEditModal(selectedBook);
-          }
-        }}
-        onDeselect={() => {
-          setSelectedBookId(null);
-          onSelectBook?.(null);
-        }}
-        onDeleteSelected={() => {
-          if (selectedBook) {
-            setBookToDelete(selectedBook);
-          }
-        }}
-        onToggleFeaturedSelected={() => {
-          if (selectedBook) {
-            onToggleFeatured(selectedBook.id);
-          }
-        }}
-        onCycleStatusSelected={handleCycleStatusSelected}
-      />
+      {/* FIXED BOTTOM NAVIGATION DOCK (Barra Inferior con 3 Partes: Publicaciones, WhatsApp, Tienda) */}
+      {!isEditorModalOpen && (
+        <AdminBottomDock
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          selectedBook={selectedBook}
+          currencySymbol={settings.currencySymbol}
+          bcvRates={bcvRates}
+          totalBooksCount={books.length}
+          catalogsCount={catalogs.length}
+          onOpenAddModal={handleOpenAddModal}
+          onEditSelected={() => {
+            if (selectedBook) {
+              handleOpenEditModal(selectedBook);
+            }
+          }}
+          onDeselect={() => {
+            setSelectedBookId(null);
+            onSelectBook?.(null);
+          }}
+          onDeleteSelected={() => {
+            if (selectedBook) {
+              setBookToDelete(selectedBook);
+            }
+          }}
+          onToggleFeaturedSelected={() => {
+            if (selectedBook) {
+              onToggleFeatured(selectedBook.id);
+            }
+          }}
+          onCycleStatusSelected={handleCycleStatusSelected}
+        />
+      )}
     </div>
   );
 };
