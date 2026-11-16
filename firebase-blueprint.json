@@ -35,7 +35,8 @@
         "whatsappTemplate": { "type": "string" },
         "currencySymbol": { "type": "string" },
         "adminUsername": { "type": "string" },
-        "adminPassword": { "type": "string" }
+        "adminPassword": { "type": "string" },
+        "selectedEditionsImage": { "type": "string" }
       },
       "required": ["storeName", "whatsappNumber"]
     },

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Book, BookStatus, StoreSettings } from '../types';
 import { INITIAL_BOOKS, DEFAULT_STORE_SETTINGS } from '../data/initialData';
 import { BcvRates, getStoredBcvRates, syncBcvRates } from '../services/bcvRates';
+import { FALLBACK_BOOK_COVER } from '../utils/helpers';
 import {
   subscribeToBooks,
   subscribeToSettings,
@@ -29,6 +30,49 @@ export const DEFAULT_CATALOGS: string[] = [
   'Clásicos y Filosofía',
   'Romance y Clásicos',
 ];
+
+/**
+ * Safely persists cached items to browser localStorage without exceeding the 5MB browser quota.
+ * Automatically strips huge raw data:image base64 strings from client-side cache because
+ * Firebase Firestore is the authoritative cloud database for full images.
+ */
+function safeSaveToLocalStorage(key: string, value: unknown, stripBase64 = false): void {
+  try {
+    let dataToStore = value;
+    if (stripBase64 && Array.isArray(value)) {
+      dataToStore = value.map((item) => {
+        if (typeof item === 'object' && item !== null) {
+          const b = item as Book;
+          const isCoverBase64 = typeof b.coverUrl === 'string' && b.coverUrl.startsWith('data:');
+          const cleanImages = Array.isArray(b.images)
+            ? b.images.filter((img) => typeof img === 'string' && !img.startsWith('data:'))
+            : [];
+          return {
+            ...b,
+            coverUrl: isCoverBase64 ? '' : b.coverUrl,
+            images: cleanImages,
+          };
+        }
+        return item;
+      });
+    } else if (stripBase64 && typeof value === 'object' && value !== null) {
+      const copy: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+      if (typeof copy.selectedEditionsImage === 'string' && copy.selectedEditionsImage.startsWith('data:')) {
+        copy.selectedEditionsImage = '';
+      }
+      dataToStore = copy;
+    }
+
+    localStorage.setItem(key, JSON.stringify(dataToStore));
+  } catch {
+    // If browser quota exceeded or storage choked, safely clean up cached key
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  }
+}
 
 export function useBooksStore() {
   const [bcvRates, setBcvRates] = useState<BcvRates>(getStoredBcvRates);
@@ -58,7 +102,7 @@ export function useBooksStore() {
             if (imgs.length === 0 && b.coverUrl) {
               imgs = [b.coverUrl];
             }
-            const primaryCover = imgs[0] || b.coverUrl || '';
+            const primaryCover = imgs[0] || b.coverUrl || FALLBACK_BOOK_COVER;
             return {
               ...b,
               currency: cur,
@@ -133,51 +177,21 @@ export function useBooksStore() {
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [isWishlistOpen, setIsWishlistOpen] = useState<boolean>(false);
 
-  // Sync to localStorage
+  // Sync to localStorage safely without exceeding quota limits
   useEffect(() => {
-    try {
-      localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(books));
-    } catch (e: unknown) {
-      console.error('Error saving books to localStorage:', e);
-      const isQuotaError =
-        e instanceof DOMException &&
-        (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
-      if (isQuotaError) {
-        try {
-          const lightweight = books.map((b) => ({
-            ...b,
-            images: (b.images || []).filter((img) => !img.startsWith('data:image') || img.length < 100000),
-          }));
-          localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(lightweight));
-        } catch (innerErr) {
-          console.error('No se pudo guardar catálogo optimizado:', innerErr);
-        }
-      }
-    }
+    safeSaveToLocalStorage(BOOKS_STORAGE_KEY, books, true);
   }, [books]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-    } catch (e) {
-      console.error('Error saving settings to localStorage:', e);
-    }
+    safeSaveToLocalStorage(SETTINGS_STORAGE_KEY, settings, true);
   }, [settings]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(WISHLIST_STORAGE_KEY, JSON.stringify(wishlistIds));
-    } catch (e) {
-      console.error('Error saving wishlist to localStorage:', e);
-    }
+    safeSaveToLocalStorage(WISHLIST_STORAGE_KEY, wishlistIds, false);
   }, [wishlistIds]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(CATALOGS_STORAGE_KEY, JSON.stringify(catalogs));
-    } catch (e) {
-      console.error('Error saving catalogs to localStorage:', e);
-    }
+    safeSaveToLocalStorage(CATALOGS_STORAGE_KEY, catalogs, false);
   }, [catalogs]);
 
   useEffect(() => {
@@ -187,8 +201,8 @@ export function useBooksStore() {
       } else {
         localStorage.removeItem(ADMIN_SESSION_KEY);
       }
-    } catch (e) {
-      console.error('Error saving admin session:', e);
+    } catch {
+      // ignore
     }
   }, [isAdminLoggedIn]);
 
@@ -637,11 +651,7 @@ export function useBooksStore() {
   const importCatalog = (importedBooks: Book[]) => {
     if (Array.isArray(importedBooks) && importedBooks.length > 0) {
       setBooks(importedBooks);
-      try {
-        localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(importedBooks));
-      } catch (e) {
-        console.warn('Error saving imported books to localStorage:', e);
-      }
+      safeSaveToLocalStorage(BOOKS_STORAGE_KEY, importedBooks, true);
       // Sync each or bulk to server
       importedBooks.forEach((book) => {
         fetch(`/api/books/${encodeURIComponent(book.id)}`, {

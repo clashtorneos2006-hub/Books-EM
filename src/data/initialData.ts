@@ -1,5 +1,54 @@
 import { Book, StoreSettings } from '../types';
 
+export const DEFAULT_SELECTED_EDITIONS_IMAGE =
+  'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=900&q=80';
+
+export interface SelectedEditionsPreset {
+  id: string;
+  name: string;
+  url: string;
+  description: string;
+}
+
+export const SELECTED_EDITIONS_PRESETS: SelectedEditionsPreset[] = [
+  {
+    id: 'vintage-coffee',
+    name: 'Café & Libros Vintage (Original)',
+    url: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=900&q=80',
+    description: 'Taza de cerámica, libro abierto y atmósfera cálida de lectura.',
+  },
+  {
+    id: 'antique-library',
+    name: 'Biblioteca Clásica de Roble',
+    url: 'https://images.unsplash.com/photo-1507842229458-77905563540c?auto=format&fit=crop&w=900&q=80',
+    description: 'Estanterías señoriales con iluminación dorada cálida.',
+  },
+  {
+    id: 'cozy-stack',
+    name: 'Pila de Novelas & Taza de Té',
+    url: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=900&q=80',
+    description: 'Libros encuadernados con tonos tierra y estética editorial.',
+  },
+  {
+    id: 'botanical-reading',
+    name: 'Rincón Botánico & Lectura',
+    url: 'https://images.unsplash.com/photo-1495446815901-a7297e633e8d?auto=format&fit=crop&w=900&q=80',
+    description: 'Luz natural matutina entre páginas y plantas decorativas.',
+  },
+  {
+    id: 'open-pages-sunlight',
+    name: 'Páginas al Sol & Café',
+    url: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=900&q=80',
+    description: 'Detalle de encuadernación artística y lectura relajante.',
+  },
+  {
+    id: 'warm-bookshelf',
+    name: 'Estantes Iluminados Books EM',
+    url: 'https://images.unsplash.com/photo-1463320726281-696a485928c7?auto=format&fit=crop&w=900&q=80',
+    description: 'Colección de tomos selectos en madera envejecida.',
+  },
+];
+
 export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   storeName: 'Books EM',
   tagline: 'Librería selecta, historias que trascienden y enriquecen tu vida',
@@ -12,6 +61,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   storeLocation: 'Venezuela (Envíos a todo el país)',
   adminUsername: 'dylan123456',
   adminPassword: '12345678',
+  selectedEditionsImage: DEFAULT_SELECTED_EDITIONS_IMAGE,
 };
 
 export const INITIAL_BOOKS: Book[] = [

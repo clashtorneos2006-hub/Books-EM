@@ -1,7 +1,8 @@
 import React from 'react';
-import { BookOpen, ShoppingCart, Truck, Heart, ArrowDown } from 'lucide-react';
+import { BookOpen, ShoppingCart, Truck, Heart, ArrowDown, Camera } from 'lucide-react';
 import { StoreSettings } from '../types';
 import { BooksEmLogo } from './BotanicalElements';
+import { DEFAULT_SELECTED_EDITIONS_IMAGE } from '../data/initialData';
 
 interface HeroBannerProps {
   settings?: StoreSettings;
@@ -14,6 +15,8 @@ interface HeroBannerProps {
   onSelectGenre: (genre: string) => void;
   selectedGenre: string;
   catalogs?: string[];
+  isAdminLoggedIn?: boolean;
+  onEditSelectedEditions?: () => void;
 }
 
 const DEFAULT_POPULAR_GENRES = [
@@ -35,6 +38,8 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   onSelectGenre,
   selectedGenre,
   catalogs,
+  isAdminLoggedIn,
+  onEditSelectedEditions,
 }) => {
   const handleExplore = onScrollToCatalog || onExploreClick || (() => {});
   return (
@@ -152,10 +157,10 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               {/* Arched Window Container */}
               <div className="relative bg-[#E2D2D0] rounded-t-[140px] sm:rounded-t-[180px] rounded-b-3xl p-4 sm:p-5 pb-5 sm:pb-6 border border-[#DAC5C2] shadow-lg overflow-hidden">
                 {/* Background warm aesthetic image with books, ceramic mug with heart, and botanical plant */}
-                <div className="relative h-80 sm:h-96 w-full rounded-t-[125px] sm:rounded-t-[160px] rounded-b-2xl overflow-hidden shadow-inner bg-gradient-to-b from-[#EADBD9] to-[#DAC5C2]">
+                <div className="relative h-80 sm:h-96 w-full rounded-t-[125px] sm:rounded-t-[160px] rounded-b-2xl overflow-hidden shadow-inner bg-gradient-to-b from-[#EADBD9] to-[#DAC5C2] group">
                   <img
-                    src="https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=900&q=80"
-                    alt="Colección de libros y café"
+                    src={settings?.selectedEditionsImage || DEFAULT_SELECTED_EDITIONS_IMAGE}
+                    alt="Ediciones Selectas - Libros y Café"
                     className="w-full h-full object-cover object-center transform hover:scale-105 transition-transform duration-700"
                     referrerPolicy="no-referrer"
                   />
@@ -164,10 +169,23 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
                   {/* Aesthetic book spine labels representation */}
                   <div className="absolute top-6 inset-x-6 flex items-center justify-center">
-                    <span className="text-[10px] tracking-[0.3em] uppercase font-bold text-white/95 bg-[#3B2213]/70 backdrop-blur-xs px-3 py-1 rounded-full">
+                    <span className="text-[10px] tracking-[0.3em] uppercase font-bold text-white/95 bg-[#3B2213]/70 backdrop-blur-xs px-3 py-1 rounded-full shadow-sm">
                       ✦ Ediciones Selectas ✦
                     </span>
                   </div>
+
+                  {/* Admin Direct Edit Floating Action Button */}
+                  {isAdminLoggedIn && onEditSelectedEditions && (
+                    <button
+                      type="button"
+                      onClick={onEditSelectedEditions}
+                      className="absolute bottom-4 right-4 z-30 inline-flex items-center gap-1.5 bg-[#3B2213]/90 hover:bg-[#3B2213] text-[#FAF7F2] text-[11px] font-bold px-3 py-1.5 rounded-full shadow-lg border border-white/20 transition-all cursor-pointer backdrop-blur-xs hover:scale-105"
+                      title="Cambiar fotografía de Ediciones Selectas en el panel de administración"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-[#EADBD9]" />
+                      <span>Cambiar foto (Admin)</span>
+                    </button>
+                  )}
                 </div>
               </div>
 

@@ -308,7 +308,7 @@ export const AdminBottomDock: React.FC<AdminBottomDockProps> = ({
                   Tienda
                 </span>
                 <span className="hidden lg:block text-[9px] opacity-80">
-                  Ajustes & Pagos
+                  Ajustes & Portada
                 </span>
               </div>
             </button>

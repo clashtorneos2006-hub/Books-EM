@@ -71,6 +71,7 @@ export default function App() {
   const [isStoreEditModalOpen, setIsStoreEditModalOpen] = useState(false);
   const [storeToast, setStoreToast] = useState<string | null>(null);
   const [manualInstallTrigger, setManualInstallTrigger] = useState(false);
+  const [adminInitialTab, setAdminInitialTab] = useState<'publications' | 'catalogs' | 'whatsapp' | 'store' | 'rates'>('publications');
 
   const showStoreToast = (msg: string) => {
     setStoreToast(msg);
@@ -148,6 +149,7 @@ export default function App() {
           onResetCatalogs={resetCatalogs}
           directEditBook={directEditBook}
           onClearDirectEditBook={() => setDirectEditBook(null)}
+          initialTab={adminInitialTab}
         />
       </React.Suspense>
     );
@@ -207,6 +209,11 @@ export default function App() {
           selectedGenre={selectedGenre}
           onSelectGenre={setSelectedGenre}
           catalogs={catalogs}
+          isAdminLoggedIn={isAdminLoggedIn}
+          onEditSelectedEditions={() => {
+            setAdminInitialTab('store');
+            setIsAdminOpen(true);
+          }}
         />
 
         {/* Main Content Area */}

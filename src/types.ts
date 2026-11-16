@@ -33,6 +33,7 @@ export interface StoreSettings {
   storeLocation: string;
   adminUsername: string;
   adminPassword: string;
+  selectedEditionsImage?: string;
 }
 
 export type SortOption = 'featured' | 'price_asc' | 'price_desc' | 'title_asc' | 'recent';
